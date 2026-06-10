@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PokéTactics — Liga Johto-Kanto</title>
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/25.png">
+</head>
+<body>
+
+<!-- HOME -->
+<div id="screen-home" class="screen active">
+  <div class="logo">PokéTactics</div>
+  <div class="sub">Liga Johto-Kanto · Autobattler P2P para 2-8 entrenadores</div>
+  <div class="homebox">
+    <input id="inp-name" maxlength="14" placeholder="Tu nombre de Entrenador">
+    <button id="btn-create">🏠 Crear sala</button>
+    <div class="row">
+      <input id="inp-code" maxlength="5" placeholder="CÓDIGO" style="text-transform:uppercase">
+      <button id="btn-join">Unirse</button>
+    </div>
+    <div id="home-status" class="sub" style="margin:0"></div>
+  </div>
+</div>
+
+<!-- LOBBY -->
+<div id="screen-lobby" class="screen">
+  <div class="logo" style="font-size:28px">Sala de espera</div>
+  <div class="sub">Comparte este código con tus amigos:</div>
+  <div class="codebig" id="lobby-code">·····</div>
+  <div id="lobby-players"></div>
+  <button id="btn-start" class="hidden" style="font-size:18px;padding:12px 30px">⚔️ Empezar partida</button>
+  <div class="sub" id="lobby-hint">Esperando al anfitrión…</div>
+</div>
+
+<!-- JUEGO -->
+<div id="screen-game" class="screen">
+  <div id="topbar">
+    <span class="round" id="hud-round">1-1</span>
+    <span class="kind" id="hud-kind">PvE</span>
+    <span id="timer">30</span>
+    <span style="flex:1"></span>
+    <span id="hud-msg" class="kind"></span>
+  </div>
+  <div id="gamemain">
+    <div id="leftpanel">
+      <h4 style="font-size:12px;color:var(--dim);margin-bottom:6px">SINERGIAS</h4>
+      <div id="synlist"></div>
+    </div>
+    <div id="centro">
+      <div id="combat-title" class="hidden"></div>
+      <div id="board"></div>
+      <div id="bench"></div>
+      <div id="safari">
+        <h2>🌿 Zona Safari</h2>
+        <div class="orden" id="safari-orden"></div>
+        <div class="sgrid" id="safari-grid"></div>
+        <div id="safari-timer" style="color:var(--gold);font-size:20px;font-weight:800"></div>
+      </div>
+    </div>
+    <div id="rightpanel">
+      <h4 style="font-size:12px;color:var(--dim)">JUGADORES</h4>
+      <div id="playerlist"></div>
+      <div class="itembox">
+        <h4>COMPONENTES <span style="font-weight:400">(clic en 2 para combinar)</span></h4>
+        <div class="itemrow" id="complist"></div>
+      </div>
+      <div class="itembox">
+        <h4>OBJETOS <span style="font-weight:400">(clic y luego a una unidad)</span></h4>
+        <div class="itemrow" id="itemlist"></div>
+      </div>
+      <div class="itembox hidden" id="stonebox">
+        <h4>PIEDRAS EVOLUTIVAS 🪨 <span id="stonecount"></span></h4>
+        <button id="btn-stone" style="font-size:11px">Usar sobre unidad seleccionada</button>
+      </div>
+      <div class="unitinfo hidden" id="unitinfo"></div>
+    </div>
+  </div>
+  <div id="shopbar">
+    <div id="eco">
+      <div class="gold" id="hud-gold">💰 0</div>
+      <div class="lvl" id="hud-lvl">Nv 1 · 0/2 XP</div>
+      <div class="lvl" id="hud-board">0/1 en campo</div>
+    </div>
+    <div id="shopbtns">
+      <button id="btn-xp">📘 Comprar XP (4)</button>
+      <button id="btn-reroll">🔄 Tienda (2)</button>
+      <button id="btn-lock">🔒 Bloquear</button>
+    </div>
+    <div id="shopcards"></div>
+    <div id="sellzone">💸 Vender<br><span id="sellval"></span></div>
+  </div>
+  <div id="toasts"></div>
+  <div id="overlay"><div class="modal" id="modal"></div></div>
+</div>
+
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="data.js"></script>
+<script src="core.js"></script>
+<script src="game.js"></script>
+<script src="ui.js"></script>
+</body>
+</html>
