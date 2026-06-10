@@ -60,7 +60,7 @@
     publicPlayers() {
       return [...this.players.values()].map(e => ({
         id: e.player.id, name: e.player.name, hp: e.player.hp, level: e.player.level,
-        alive: e.player.alive, place: e.player.place, wins: e.player.wins,
+        alive: e.player.alive, place: e.player.place, wins: e.player.wins, avatar: this.avatarOf(e.player),
         streak: e.player.streakW > 0 ? '🔥' + e.player.streakW : e.player.streakL > 0 ? '❄' + e.player.streakL : '',
         connected: e.connected,
         boardPreview: C.boardUnits(e.player).map(u => ({ dex: C.unitDex(u), star: u.star })),
@@ -87,19 +87,33 @@
       if (msg.type === 'start' && id === 'host' && this.state === 'lobby') { if (this.players.size >= 2) this.startGame(); else this.send(id, { type: 'toast', msg: 'Se necesitan al menos 2 jugadores' }); return; }
       if (msg.type === 'chat') { this.broadcast({ type: 'chat', from: p.name, text: String(msg.text).slice(0, 120) }); return; }
       if (msg.type === 'scout' && (this.state === 'plan' || this.state === 'safari')) { this.sendScout(id, msg.pid); return; }
-      // --- acciones de planificación ---
-      if (this.state === 'plan' && p.alive) {
+      // --- ver el combate de otro jugador (scouting en batalla) ---
+      if (msg.type === 'watch' && this.state === 'combat') { this.switchWatch(id, msg.pid); return; }
+      // --- acciones de planificación (también permitidas durante el combate, estilo TFT) ---
+      if ((this.state === 'plan' || this.state === 'combat') && p.alive) {
+        const inCombat = this.state === 'combat';
+        const onBench = (u) => u && this.locate(p, u).zone === 'bench';
         let changed = true;
         switch (msg.type) {
           case 'buy': C.buyFromShop(p, msg.slot | 0, this.pool, null); break;
           case 'reroll': if (p.gold >= CFG.REROLL_COST) { p.gold -= CFG.REROLL_COST; C.returnShopToPool(p.shop, this.pool); p.shop = C.rollShop(this.pool, p.level, this.rng); p.locked = false; } break;
           case 'xp': if (p.gold >= CFG.XP_COST && p.level < CFG.MAX_LEVEL) { p.gold -= CFG.XP_COST; C.addXp(p, CFG.XP_PER_BUY); } break;
           case 'lock': p.locked = !p.locked; break;
-          case 'sell': { const u = C.allUnits(p).find(x => x.iid === msg.iid); if (u) C.sellUnit(p, u, this.pool); break; }
-          case 'move': this.handleMove(p, msg); break;
+          case 'sell': { const u = C.allUnits(p).find(x => x.iid === msg.iid); if (u && (!inCombat || onBench(u))) C.sellUnit(p, u, this.pool); break; }
+          case 'move': { if (inCombat) { const u = C.allUnits(p).find(x => x.iid === msg.iid); if (!u || msg.to !== 'bench' || !onBench(u)) { changed = false; break; } } this.handleMove(p, msg); break; }
           case 'combine': C.combineComponents(p, msg.i | 0, msg.j | 0); break;
-          case 'equip': { const u = C.allUnits(p).find(x => x.iid === msg.iid); if (u) C.equipItem(p, u, msg.idx | 0); break; }
-          case 'stone': { const u = C.allUnits(p).find(x => x.iid === msg.iid); if (u) C.useStone(p, u); break; }
+          case 'equip': { const u = C.allUnits(p).find(x => x.iid === msg.iid); if (u && (!inCombat || onBench(u))) C.equipItem(p, u, msg.idx | 0); break; }
+          case 'equipComp': { // componente directo a unidad; autocombina con el componente que ya lleve (TFT)
+            const u = C.allUnits(p).find(x => x.iid === msg.iid);
+            const comp = p.components[msg.idx | 0];
+            if (!u || !comp || (inCombat && !onBench(u)) || (u.lineId === 'magikarp' && u.star === 1)) { changed = false; break; }
+            const li = u.items.findIndex(k => COMPONENTS[k]);
+            if (li >= 0) { const key = [u.items[li], comp].sort().join('+'); if (ITEMS[key]) { u.items[li] = key; p.components.splice(msg.idx | 0, 1); } else changed = false; }
+            else if (u.items.length < CFG.MAX_ITEMS) { u.items.push(comp); p.components.splice(msg.idx | 0, 1); }
+            else changed = false;
+            break;
+          }
+          case 'stone': { const u = C.allUnits(p).find(x => x.iid === msg.iid); if (u && (!inCombat || onBench(u))) C.useStone(p, u); break; }
           case 'eevee': { const u = C.allUnits(p).find(x => x.iid === msg.iid && x.lineId === 'eevee'); if (u && ['vaporeon', 'jolteon', 'flareon'].includes(msg.variant)) { u.variant = msg.variant; p.pendingChoices = p.pendingChoices.filter(c => c.iid !== msg.iid); } break; }
           case 'mewcopy': { const ch = p.pendingChoices.find(c => c.type === 'mewcopy'); const u = C.allUnits(p).find(x => x.iid === msg.iid); if (ch && u) { const slot = C.findBenchSlot(p); if (slot >= 0) { const nu = C.newUnit(u.lineId); p.bench[slot] = nu; C.tryMerge(p, u.lineId, 1, null); } p.pendingChoices = p.pendingChoices.filter(c => c !== ch); } break; }
           default: changed = false;
@@ -136,11 +150,34 @@
     removeAt(p, loc) { if (loc.zone === 'board') p.board[loc.r][loc.c] = null; else if (loc.i >= 0) p.bench[loc.i] = null; }
     placeAt(p, u, loc) { if (loc.zone === 'board') p.board[loc.r][loc.c] = u; else if (loc.i >= 0) p.bench[loc.i] = u; else { const s = C.findBenchSlot(p); if (s >= 0) p.bench[s] = u; } }
 
+    avatarOf(p) {
+      if (!p) return 25;
+      let best = null;
+      C.boardUnits(p).forEach(u => { const score = C.LINE[u.lineId].cost * 10 + u.star; if (!best || score > best.score) best = { score, dex: C.unitDex(u) }; });
+      return best ? best.dex : 25;
+    }
+    matchInfo(m, forId) {
+      const youSide = (m.a && m.a.id === forId) ? 0 : 1;
+      return {
+        type: 'combat_start', label: `${this.phase}-${this.roundInPhase}`, youSide,
+        aName: m.a.name, bName: m.pve ? 'Pokémon salvajes' : (m.b.name + (m.ghost ? ' (fantasma)' : '')),
+        aLevel: m.a.level, bLevel: m.pve ? null : m.b.level,
+        aAvatar: this.avatarOf(m.a), bAvatar: m.pve ? null : this.avatarOf(m.b),
+      };
+    }
+    switchWatch(requesterId, targetPid) {
+      const target = this.sims.find(m => (m.a && m.a.id === targetPid) || (m.b && !m.pve && m.b.id === targetPid));
+      if (!target) return;
+      this.sims.forEach(m => { m.watchers = m.watchers.filter(w => w !== requesterId); });
+      target.watchers.push(requesterId);
+      this.send(requesterId, this.matchInfo(target, requesterId));
+      if (!target.sim.over) this.send(requesterId, { type: 'combat_snap', snap: C.snapshot(target.sim) });
+    }
     sendScout(requesterId, targetPid) {
       const e = this.players.get(targetPid); if (!e) return;
       const p = e.player;
       this.send(requesterId, {
-        type: 'scoutData', pid: targetPid, name: p.name, hp: p.hp, level: p.level,
+        type: 'scoutData', pid: targetPid, name: p.name, hp: p.hp, level: p.level, avatar: this.avatarOf(p),
         board: p.board.map(row => row.map(u => u ? this.serializeUnit(u) : null)),
         bench: p.bench.slice(0, CFG.BENCH_SIZE).map(u => u ? this.serializeUnit(u) : null),
         synergies: C.computeSynergies(C.boardUnits(p)),
@@ -148,7 +185,11 @@
     }
     serializeUnit(u) {
       const d = C.unitDef(u.lineId, u.star, u.variant);
-      return { iid: u.iid, lineId: u.lineId, star: u.star, variant: u.variant, stone: u.stone, items: u.items, name: C.unitName(u), dex: C.unitDex(u), cost: C.LINE[u.lineId].cost, types: d.types, cls: d.cls, ab: d.ab };
+      return {
+        iid: u.iid, lineId: u.lineId, star: u.star, variant: u.variant, stone: u.stone, items: u.items,
+        name: C.unitName(u), dex: C.unitDex(u), cost: C.LINE[u.lineId].cost, types: d.types, cls: d.cls, ab: d.ab,
+        stats: { hp: Math.round(d.hp * CFG.STAR_HP[u.star]), atk: Math.round(d.atk * CFG.STAR_ATK[u.star]), spd: d.spd, range: d.range, energy: d.energy },
+      };
     }
     syncPlayer(id) {
       const e = this.players.get(id); if (!e) return;
@@ -159,7 +200,7 @@
         you: {
           id: p.id, name: p.name, hp: p.hp, gold: p.gold, level: p.level, xp: p.xp, xpNext: C.xpToNext(p),
           alive: p.alive, locked: p.locked, boardCount: C.boardCount(p), lastIncome: p._lastIncome || null,
-          shop: p.shop.map(lid => lid ? { lineId: lid, name: C.LINE[lid].names[0], dex: C.LINE[lid].dex[0], cost: C.LINE[lid].cost, types: C.LINE[lid].types, cls: C.LINE[lid].cls, ab: C.LINE[lid].ab } : null),
+          shop: p.shop.map(lid => lid ? { lineId: lid, name: C.LINE[lid].names[0], dex: C.LINE[lid].dex[0], cost: C.LINE[lid].cost, types: C.LINE[lid].types, cls: C.LINE[lid].cls, ab: C.LINE[lid].ab, stats: { hp: C.LINE[lid].hp, atk: C.LINE[lid].atk, spd: C.LINE[lid].spd, range: C.LINE[lid].range, energy: C.LINE[lid].energy } } : null),
           bench: p.bench.slice(0, CFG.BENCH_SIZE).map(u => u ? this.serializeUnit(u) : null),
           board: p.board.map(row => row.map(u => u ? this.serializeUnit(u) : null)),
           components: p.components, fullItems: p.fullItems, stones: p.stones,
@@ -263,10 +304,7 @@
       const watched = new Set(this.sims.flatMap(m => m.watchers));
       for (const e of this.players.values()) { if (!watched.has(e.player.id) && this.sims[0]) this.sims[0].watchers.push(e.player.id); }
       // anunciar
-      this.sims.forEach(m => {
-        const info = { type: 'combat_start', aName: m.a.name, bName: m.pve ? 'Pokémon salvajes' : (m.b.name + (m.ghost ? ' (fantasma)' : '')), label: `${this.phase}-${this.roundInPhase}` };
-        m.watchers.forEach(w => { const e = this.players.get(w); info.youSide = (e && e.player === m.a) ? 0 : 1; this.send(w, { ...info }); });
-      });
+      this.sims.forEach(m => { m.watchers.forEach(w => this.send(w, this.matchInfo(m, w))); });
       // bucle en tiempo real
       let tick = 0;
       const iv = setInterval(() => {

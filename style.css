@@ -155,4 +155,29 @@ input { background: var(--panel); color: var(--text); border: 1px solid var(--li
 .pl.scoutable:hover { outline: 1px solid var(--gold); cursor: pointer; }
 #combat-title button { padding: 2px 9px; font-size: 12px; margin-left: 4px; }
 #combat-title { position: absolute; top: 54px; left: 50%; transform: translateX(-50%); background: #000a; padding: 4px 18px; border-radius: 16px; font-size: 13px; z-index: 10; }
-.tooltip { position: absolute; background: #0e1228f2; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 12px; z-index: 99; max-width: 230px; pointer-events: none; }
+/* tooltip propio instantáneo */
+#tooltip { position: fixed; display: none; background: #0c1024f8; border: 1px solid #4a5694; border-radius: 10px; padding: 10px 12px; font-size: 12px; z-index: 300; max-width: 260px; pointer-events: none; box-shadow: 0 6px 22px #000c; line-height: 1.45; }
+#tooltip .tname { font-weight: 800; font-size: 13px; }
+#tooltip .trole { color: var(--dim); margin: 2px 0; }
+#tooltip .tstats { color: #b8c4f0; font-size: 11px; margin: 3px 0; }
+#tooltip .tab { margin-top: 4px; border-top: 1px solid #36406e; padding-top: 4px; }
+#tooltip .chip { font-size: 9px; padding: 1px 5px; border-radius: 4px; color: #111; font-weight: 700; margin-right: 3px; }
+#tooltip .combo { display: flex; gap: 5px; margin-top: 3px; font-size: 11px; }
+#tooltip .gold { color: var(--gold); }
+
+/* drag & drop */
+.dragghost { position: fixed; pointer-events: none; z-index: 400; opacity: .85; width: 60px; transform: scale(1.05); }
+.dragghost img { width: 56px; height: 56px; image-rendering: pixelated; }
+.cell.own.dropok { background: #2e5d3f99; border-color: #6c6; }
+
+/* badges de jugador junto al tablero */
+.pbadge { position: absolute; left: 12px; display: flex; flex-direction: column; align-items: center; gap: 2px; z-index: 8; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 7px 9px; width: 88px; }
+#badge-top { top: 86px; }
+#badge-bottom { bottom: 130px; }
+.pbadge img { width: 46px; height: 46px; image-rendering: pixelated; }
+.pbadge .lv { background: var(--gold); color: #111; font-weight: 800; border-radius: 10px; padding: 0 9px; font-size: 12px; }
+.pbadge .nm { font-size: 11px; max-width: 82px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pbadge.foe { border-color: #a05050; }
+
+/* objetos bajo la unidad en combate */
+.unit .citems { position: absolute; bottom: -13px; width: 100%; text-align: center; font-size: 10px; letter-spacing: -1px; }

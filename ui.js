@@ -1,20 +1,24 @@
-// PokéTactics — ui.js : interfaz y glue de red
+// PokéTactics — ui.js : interfaz y glue de red (v1.2: tooltips, drag&drop, watch, badges)
 (function () {
   const D = window.PTDATA, C = window.PTCORE, G = window.PTGAME;
   const { CFG, TYPE_COLORS, COMPONENTS, ITEMS, SYNERGIES } = D;
   const $ = (id) => document.getElementById(id);
   const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html !== undefined) e.innerHTML = html; return e; };
+  const esc = (s) => String(s).replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
 
   let host = null, client = null, myPid = null;
-  let S = null;            // último estado de planificación
-  let combat = null;       // {youSide, aName, bName}
+  let S = null;            // último estado
+  let combat = null;       // info del combate visto
   let lastSnap = null;
-  let sel = null;          // {iid, zone, ...}
+  let sel = null;          // unidad seleccionada {iid, unit}
   let selItem = null, selComp = null;
   let mode = 'plan';
-  let scout = null;        // datos de scouting del rival
+  let scout = null;        // datos de scouting
+  let safariEndsAt = 0;
 
-  // ---------- geometría del tablero ----------
+  $('version').textContent = 'Versión ' + D.VERSION;
+
+  // ---------- geometría ----------
   const CW = 66, CH = 60, OX = 14, OY = 12;
   const cellX = (r, c) => OX + c * CW + (r % 2) * (CW / 2);
   const cellY = (r) => OY + r * CH;
@@ -22,10 +26,107 @@
   boardEl.style.width = (OX * 2 + 7 * CW + CW / 2) + 'px';
   boardEl.style.height = (OY * 2 + 8 * CH + 14) + 'px';
 
-  $('version').textContent = 'Versión ' + D.VERSION;
-
   function show(screen) { document.querySelectorAll('.screen').forEach(s => s.classList.remove('active')); $(screen).classList.add('active'); }
   function toast(msg, ms = 3500) { const t = el('div', 'toast', msg); $('toasts').appendChild(t); setTimeout(() => t.remove(), ms); }
+
+  // ================= TOOLTIP instantáneo =================
+  const tipEl = el('div'); tipEl.id = 'tooltip'; document.body.appendChild(tipEl);
+  function posTip(e) {
+    const w = tipEl.offsetWidth, h = tipEl.offsetHeight;
+    let x = e.clientX + 16, y = e.clientY + 12;
+    if (x + w > innerWidth - 8) x = e.clientX - w - 12;
+    if (y + h > innerHeight - 8) y = e.clientY - h - 12;
+    tipEl.style.left = x + 'px'; tipEl.style.top = y + 'px';
+  }
+  function tt(node, html) {
+    node.onmouseenter = (e) => { tipEl.innerHTML = typeof html === 'function' ? html() : html; tipEl.style.display = 'block'; posTip(e); };
+    node.onmousemove = posTip;
+    node.onmouseleave = () => { tipEl.style.display = 'none'; };
+  }
+  function hideTip() { tipEl.style.display = 'none'; }
+  const chip = (t) => `<span class="chip" style="background:${TYPE_COLORS[t] || '#888'}">${t}</span>`;
+  function roleText(cls, range) {
+    const pos = cls === 'Velocista' ? 'Salta a la retaguardia enemiga' : (cls === 'Tanque' || cls === 'Atacante') ? 'Línea frontal' : 'Línea trasera';
+    const dmg = { Tanque: 'Aguanta daño', Atacante: 'Daño de ataque', Especialista: 'Daño de habilidad', Soporte: 'Curación y escudos', Velocista: 'Asesino' }[cls] || '';
+    return `${pos} · ${dmg} · Alcance ${range}`;
+  }
+  function unitTip(u) {
+    const st = u.stats || {};
+    return `<div class="tname">${esc(u.name)} <span class="gold">${'★'.repeat(u.star || 1)}</span> · ${u.cost}💰</div>
+      <div>${(u.types || []).map(chip).join('')}${u.cls ? chip(u.cls) : ''}</div>
+      <div class="trole">${u.cls ? roleText(u.cls, st.range ?? 1) : 'Sin tipo (¡confía en el pez!)'}</div>
+      <div class="tstats">❤ ${st.hp ?? '?'} · ⚔ ${st.atk ?? '?'} · ⚡ ${st.spd ?? '?'}/s · 🔵 ${st.energy ?? '?'} energía</div>
+      <div class="tab"><b>${esc(u.ab.name)}</b>: ${esc(u.ab.desc)}</div>
+      ${u.items && u.items.length ? `<div class="tab">${u.items.map(k => itemMini(k)).join('<br>')}</div>` : ''}
+      ${u.stone ? '<div class="tab">🪨 Piedra Evolutiva (cuenta como copia extra)</div>' : ''}`;
+  }
+  function itemMini(k) {
+    if (ITEMS[k]) return `${ITEMS[k].emoji} <b>${ITEMS[k].name}</b>: ${ITEMS[k].desc}`;
+    if (COMPONENTS[k]) return `${COMPONENTS[k].emoji} <b>${COMPONENTS[k].name}</b> (componente): ${COMPONENTS[k].stat}`;
+    return k;
+  }
+  function itemTip(k) { return `<div class="tname">${ITEMS[k].emoji} ${ITEMS[k].name}</div><div>${ITEMS[k].desc}</div><div class="trole">Arrástralo sobre una de tus unidades (máx 3)</div>`; }
+  function compTip(k) {
+    const combos = Object.keys(COMPONENTS).map(o => {
+      const key = [k, o].sort().join('+');
+      const it = ITEMS[key];
+      return it ? `<div class="combo">${COMPONENTS[o].emoji}→${it.emoji} <b>${it.name}</b>: ${it.desc}</div>` : '';
+    }).join('');
+    return `<div class="tname">${COMPONENTS[k].emoji} ${COMPONENTS[k].name} <span class="trole">(componente)</span></div>
+      <div>${COMPONENTS[k].stat}</div>
+      <div class="trole">Equipable suelto; al añadir otro componente se combina:</div>${combos}`;
+  }
+
+  // ================= DRAG & DROP =================
+  let drag = null, lastDragEnd = 0;
+  const canAct = () => S && S.you.alive && (mode === 'plan' || mode === 'combat') && !scout;
+  function startDrag(e, info, srcEl, clickFn) {
+    if (e.button !== undefined && e.button !== 0) return;
+    drag = { ...info, sx: e.clientX, sy: e.clientY, moved: false, clickFn };
+    const g = srcEl.cloneNode(true); g.classList.add('dragghost');
+    g.style.left = (e.clientX - 28) + 'px'; g.style.top = (e.clientY - 30) + 'px';
+    document.body.appendChild(g); drag.ghost = g;
+    if (info.kind === 'unit') { $('sellzone').classList.add('show'); $('sellval').textContent = '+' + sellVal(info.unit) + ' oro'; }
+    hideTip();
+    e.preventDefault();
+  }
+  document.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    if (Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) > 6) drag.moved = true;
+    drag.ghost.style.left = (e.clientX - 28) + 'px'; drag.ghost.style.top = (e.clientY - 30) + 'px';
+  });
+  document.addEventListener('pointerup', (e) => {
+    if (!drag) return;
+    const d = drag; drag = null; d.ghost.remove();
+    lastDragEnd = Date.now();
+    if (!sel) $('sellzone').classList.remove('show');
+    if (!d.moved) { if (d.clickFn) d.clickFn(); return; }
+    d.ghost.style.display = 'none';
+    const t = document.elementFromPoint(e.clientX, e.clientY);
+    if (!t || !canAct()) return;
+    const sellz = t.closest && t.closest('#sellzone');
+    const bs = t.closest && t.closest('.bslot');
+    const un = t.closest && t.closest('.unit');
+    const cell = t.closest && t.closest('.cell');
+    if (d.kind === 'unit') {
+      sel = null;
+      if (sellz) { client.send({ type: 'sell', iid: d.unit.iid }); return; }
+      if (bs) { client.send({ type: 'move', iid: d.unit.iid, to: 'bench', i: +bs.dataset.i }); return; }
+      let r = null, c = null;
+      if (un && un.dataset.r !== undefined) { r = +un.dataset.r; c = +un.dataset.c; }
+      else if (cell) { r = +cell.dataset.r; c = +cell.dataset.c; }
+      if (r !== null && r >= 4 && mode === 'plan') client.send({ type: 'move', iid: d.unit.iid, to: 'board', r: 7 - r, c });
+    } else {
+      let iid = null;
+      if (un && un.dataset.iid) iid = +un.dataset.iid;
+      else if (bs && bs.dataset.iid) iid = +bs.dataset.iid;
+      if (iid !== null) {
+        client.send({ type: d.kind === 'comp' ? 'equipComp' : 'equip', iid, idx: d.idx });
+        if (d.kind === 'comp') selComp = null; else selItem = null;
+      }
+    }
+  });
+  const justDragged = () => Date.now() - lastDragEnd < 120;
 
   // ---------- home ----------
   $('btn-create').onclick = () => {
@@ -64,9 +165,20 @@
       case 'error': $('home-status').textContent = msg.err; toast(msg.err); break;
       case 'lobby': renderLobby(msg); break;
       case 'gamestart': show('screen-game'); break;
-      case 'state': S = msg; if (mode !== 'combat' || msg.state === 'plan') { mode = msg.state === 'combat' ? mode : 'plan'; } if (msg.state === 'plan') { mode = 'plan'; $('safari').classList.remove('show'); } renderAll(); checkChoices(); break;
-      case 'combat_start': mode = 'combat'; combat = msg; lastSnap = null; scout = null; $('combat-title').textContent = `⚔ ${msg.aName} vs ${msg.bName}`; $('combat-title').classList.remove('hidden'); clearBoardUnits(); break;
-      case 'scoutData': scout = msg; if (mode === 'plan' || mode === 'safari') renderScoutBoard(); break;
+      case 'state':
+        S = msg;
+        if (msg.state === 'plan') { mode = 'plan'; $('safari').classList.remove('show'); }
+        renderAll(); checkChoices();
+        break;
+      case 'combat_start':
+        mode = 'combat'; combat = msg; lastSnap = null; scout = null;
+        unitEls.forEach(d => d.remove()); unitEls.clear(); clearBoardUnits();
+        $('combat-title').innerHTML = `⚔ <b>${esc(msg.aName)}</b>${msg.aLevel ? ` (Nv ${msg.aLevel})` : ''} vs <b>${esc(msg.bName)}</b>${msg.bLevel ? ` (Nv ${msg.bLevel})` : ''}`;
+        $('combat-title').classList.remove('hidden');
+        updateBadges();
+        if (S) renderBench();
+        break;
+      case 'scoutData': scout = msg; if (mode === 'plan' || mode === 'safari') { renderScoutBoard(); updateBadges(); } break;
       case 'combat_snap': lastSnap = msg.snap; renderCombat(msg.snap); break;
       case 'combat_results': showResults(msg); break;
       case 'safari': mode = 'safari'; renderSafari(msg); break;
@@ -79,7 +191,6 @@
     const box = $('lobby-players'); box.innerHTML = '';
     msg.players.forEach(p => box.appendChild(el('div', 'lobby-p', `<span>${esc(p.name)}${p.id === myPid ? ' (tú)' : ''}</span><span>${p.connected ? '🟢' : '🔴'}</span>`)));
   }
-  const esc = (s) => String(s).replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
 
   // ---------- render principal ----------
   function renderAll() {
@@ -97,20 +208,44 @@
     $('odds').innerHTML = (D.SHOP_ODDS[Math.min(S.you.level, 9)] || []).map((o, i) => `<span class="o${i + 1}">${o}%</span>`).join('');
     renderRoundTrack();
     renderShop(); renderPlayers(); renderSynergies(); renderItems();
-    if (mode === 'plan') { if (scout) { client.send({ type: 'scout', pid: scout.pid }); } else renderPlanBoard(); }
+    if (mode === 'plan') { if (scout) client.send({ type: 'scout', pid: scout.pid }); else renderPlanBoard(); }
+    else if (mode === 'combat') renderBench();
+    updateBadges();
     if (!S.you.alive) $('hud-msg').textContent = '💀 Eliminado — modo espectador';
   }
 
-  // indicador de rondas de la fase (estilo TFT)
   function renderRoundTrack() {
     const box = $('roundtrack'); box.innerHTML = '';
     const icons = S.round.phase === 1 ? ['🐾', '🐾', '🐾'] : ['🌿', '⚔', '⚔', '⚔', '⚔', '🐾'];
     const cur = S.round.num - 1;
     icons.forEach((ic, i) => {
       const d = el('div', 'rt' + (i === cur ? ' cur' : i < cur ? ' done' : ''), ic);
-      d.title = `Ronda ${S.round.phase}-${i + 1}: ` + (ic === '🌿' ? 'Safari' : ic === '⚔' ? 'PvP' : 'PvE');
+      tt(d, `<b>Ronda ${S.round.phase}-${i + 1}</b>: ` + (ic === '🌿' ? 'Safari (carrusel compartido)' : ic === '⚔' ? 'PvP contra otro entrenador' : 'PvE contra Pokémon salvajes'));
       box.appendChild(d);
     });
+  }
+
+  // ---------- badges de avatar/nivel ----------
+  function setBadge(node, name, level, avatar, foe) {
+    node.classList.remove('hidden'); node.classList.toggle('foe', !!foe);
+    const img = avatar ? `<img draggable="false" src="${D.SPRITE(avatar)}">` : '<div style="font-size:32px;line-height:46px">🌿</div>';
+    node.innerHTML = `${img}<div class="lv">${level != null ? 'Nv ' + level : 'PvE'}</div><div class="nm">${esc(name)}</div>`;
+  }
+  function updateBadges() {
+    const top = $('badge-top'), bot = $('badge-bottom');
+    if (mode === 'combat' && combat) {
+      const a = { n: combat.aName, l: combat.aLevel, av: combat.aAvatar }, b = { n: combat.bName, l: combat.bLevel, av: combat.bAvatar };
+      const me = combat.youSide === 0 ? a : b, foe = combat.youSide === 0 ? b : a;
+      setBadge(bot, me.n, me.l, me.av, false);
+      setBadge(top, foe.n, foe.l, foe.av, true);
+    } else if (scout) {
+      setBadge(bot, scout.name, scout.level, scout.avatar, true);
+      top.classList.add('hidden');
+    } else if (S) {
+      const me = S.players.find(p => p.id === myPid);
+      if (me) setBadge(bot, me.name, me.level, me.avatar, false);
+      top.classList.add('hidden');
+    }
   }
 
   function renderShop() {
@@ -118,10 +253,10 @@
     S.you.shop.forEach((card, i) => {
       if (!card) { box.appendChild(el('div', 'card empty', '&nbsp;')); return; }
       const cd = el('div', `card c${card.cost}`);
-      cd.innerHTML = `<span class="cost">${card.cost}💰</span><img src="${D.SPRITE(card.dex)}"><div class="nm">${card.name}</div>
+      cd.innerHTML = `<span class="cost">${card.cost}💰</span><img draggable="false" src="${D.SPRITE(card.dex)}"><div class="nm">${card.name}</div>
         <div class="ty">${card.types.map(t => `<span style="background:${TYPE_COLORS[t]}">${t}</span>`).join('')}${card.cls ? `<span style="background:${TYPE_COLORS[card.cls]}">${card.cls}</span>` : ''}</div>`;
-      cd.title = `${card.name} — ${card.ab.name}: ${card.ab.desc}`;
-      cd.onclick = () => client.send({ type: 'buy', slot: i });
+      tt(cd, () => unitTip({ ...card, star: 1 }));
+      cd.onclick = () => { if (!justDragged()) client.send({ type: 'buy', slot: i }); };
       box.appendChild(cd);
     });
   }
@@ -129,12 +264,18 @@
   function renderPlayers() {
     const box = $('playerlist'); box.innerHTML = '';
     S.players.slice().sort((a, b) => b.hp - a.hp || (a.alive ? -1 : 1)).forEach(p => {
-      const d = el('div', 'pl' + (p.alive ? '' : ' dead') + (p.id !== myPid && p.alive ? ' scoutable' : ''));
-      if (p.id !== myPid && p.alive) { d.title = 'Clic para ver su tablero'; d.onclick = () => { if (mode === 'plan' || mode === 'safari') client.send({ type: 'scout', pid: p.id }); }; }
-      else if (p.id === myPid) d.onclick = () => exitScout();
+      const d = el('div', 'pl' + (p.alive ? '' : ' dead') + (p.alive ? ' scoutable' : ''));
+      if (p.alive) {
+        tt(d, mode === 'combat' ? '👁 Clic para ver su combate en vivo' : (p.id === myPid ? 'Tu tablero' : '🔍 Clic para espiar su tablero'));
+        d.onclick = () => {
+          if (mode === 'combat') client.send({ type: 'watch', pid: p.id });
+          else if (p.id === myPid) exitScout();
+          else if (mode === 'plan' || mode === 'safari') client.send({ type: 'scout', pid: p.id });
+        };
+      }
       d.innerHTML = `<div class="nm"><span>${esc(p.name)}${p.id === myPid ? ' ⭐' : ''}${p.connected ? '' : ' 🔌'}</span><span>${p.alive ? p.hp + '❤' : '#' + p.place}</span></div>
         <div class="hpbar"><i style="width:${p.hp}%"></i></div>
-        <div class="mini">${p.boardPreview.map(u => `<img src="${D.SPRITE(u.dex)}" title="${u.star}★">`).join('')}</div>
+        <div class="mini">${p.boardPreview.map(u => `<img draggable="false" src="${D.SPRITE(u.dex)}" title="${u.star}★">`).join('')}</div>
         <div style="font-size:11px;color:var(--dim)">Nv ${p.level} ${p.streak}</div>`;
       box.appendChild(d);
     });
@@ -149,7 +290,8 @@
       const def = SYNERGIES[k];
       const d = el('div', 'syn' + (v.tier > 0 ? ' active' : ''));
       d.innerHTML = `<span class="dot" style="background:${TYPE_COLORS[k] || '#888'}">${v.count}</span><span>${k}</span><span class="cnt">${def.thresholds.join('/')}</span>`;
-      d.title = def.desc.map((t, i) => `(${def.thresholds[i]}) ${t}`).join('\n');
+      tt(d, `<div class="tname">${chip(k)} ${k} (${v.count})</div>` + def.desc.map((t, i) =>
+        `<div class="${v.count >= def.thresholds[i] ? 'gold' : 'trole'}">(${def.thresholds[i]}) ${esc(t)}</div>`).join(''));
       box.appendChild(d);
     });
     if (!syns.length) box.innerHTML = '<div style="color:var(--dim);font-size:12px">Coloca unidades en el campo</div>';
@@ -160,30 +302,36 @@
     const cb = $('complist'); cb.innerHTML = '';
     S.you.components.forEach((k, i) => {
       const d = el('div', 'itm' + (selComp === i ? ' sel' : ''), COMPONENTS[k].emoji);
-      d.title = `${COMPONENTS[k].name}: ${COMPONENTS[k].stat}`;
-      d.onclick = () => {
-        if (selComp === null) { selComp = i; }
-        else if (selComp === i) { selComp = null; }
-        else { client.send({ type: 'combine', i: selComp, j: i }); selComp = null; }
-        renderItems();
-      };
+      tt(d, compTip(k));
+      d.onpointerdown = (e) => { if (canAct()) startDrag(e, { kind: 'comp', idx: i }, d, () => compClick(i)); };
       cb.appendChild(d);
     });
     if (!S.you.components.length) cb.innerHTML = '<span style="font-size:11px;color:var(--dim)">Gana componentes en rondas PvE</span>';
     const ib = $('itemlist'); ib.innerHTML = '';
     S.you.fullItems.forEach((k, i) => {
       const d = el('div', 'itm' + (selItem === i ? ' sel' : ''), ITEMS[k].emoji);
-      d.title = `${ITEMS[k].name}: ${ITEMS[k].desc}`;
-      d.onclick = () => { selItem = selItem === i ? null : i; renderItems(); toast(selItem !== null ? 'Ahora haz clic en una unidad tuya para equipar' : 'Equipado cancelado', 1800); };
+      tt(d, itemTip(k));
+      d.onpointerdown = (e) => { if (canAct()) startDrag(e, { kind: 'item', idx: i }, d, () => itemClick(i)); };
       ib.appendChild(d);
     });
-    if (!S.you.fullItems.length) ib.innerHTML = '<span style="font-size:11px;color:var(--dim)">Combina 2 componentes</span>';
+    if (!S.you.fullItems.length) ib.innerHTML = '<span style="font-size:11px;color:var(--dim)">Combina 2 componentes (o equípalos sueltos)</span>';
     $('stonebox').classList.toggle('hidden', S.you.stones <= 0);
     $('stonecount').textContent = '×' + S.you.stones;
   }
+  function compClick(i) {
+    if (selComp === null) { selComp = i; selItem = null; toast('Arrastra o haz clic en otra cosa: otro componente = combinar · una unidad = equipar', 2600); }
+    else if (selComp === i) selComp = null;
+    else { client.send({ type: 'combine', i: selComp, j: i }); selComp = null; }
+    renderItems();
+  }
+  function itemClick(i) {
+    selItem = selItem === i ? null : i; selComp = null;
+    renderItems();
+    if (selItem !== null) toast('Haz clic en una unidad tuya para equipar (o arrástralo)', 2000);
+  }
   $('btn-stone').onclick = () => { if (sel) client.send({ type: 'stone', iid: sel.iid }); };
 
-  // ---------- tablero (planificación) ----------
+  // ---------- tablero ----------
   function clearBoardUnits() { boardEl.querySelectorAll('.unit,.float').forEach(e => e.remove()); }
   function ensureCells() {
     if (boardEl.querySelector('.cell')) return;
@@ -191,11 +339,12 @@
       const cell = el('div', 'cell' + (r >= 4 ? ' own' : ''));
       cell.style.left = cellX(r, c) + 'px'; cell.style.top = cellY(r) + 'px';
       cell.dataset.r = r; cell.dataset.c = c;
-      cell.onclick = () => onCellClick(r, c);
+      cell.onclick = () => { if (!justDragged()) boardClick(r, c); };
       boardEl.appendChild(cell);
     }
   }
-  // ---------- scouting (estilo TFT) ----------
+
+  // ---------- scouting ----------
   function renderScoutBoard() {
     if (!scout) return;
     ensureCells(); clearBoardUnits();
@@ -203,17 +352,17 @@
     ct.classList.remove('hidden');
     ct.innerHTML = `🔍 Tablero de <b>${esc(scout.name)}</b> · Nv ${scout.level} · ${scout.hp}❤
       <button id="scout-prev" title="Anterior">‹</button><button id="scout-next" title="Siguiente">›</button><button id="scout-back">Volver (Esc)</button>`;
-    document.getElementById('scout-back').onclick = exitScout;
-    document.getElementById('scout-prev').onclick = () => cycleScout(-1);
-    document.getElementById('scout-next').onclick = () => cycleScout(1);
+    $('scout-back').onclick = exitScout;
+    $('scout-prev').onclick = () => cycleScout(-1);
+    $('scout-next').onclick = () => cycleScout(1);
     for (let ownR = 0; ownR < 4; ownR++) for (let c = 0; c < 7; c++) {
       const u = scout.board[ownR][c];
-      if (u) { const d = planUnitEl(u, 7 - ownR, c, false); d.onclick = (e) => e.stopPropagation(); boardEl.appendChild(d); }
+      if (u) { const d = planUnitEl(u, 7 - ownR, c, true); boardEl.appendChild(d); }
     }
     const box = $('bench'); box.innerHTML = '';
     scout.bench.forEach(u => {
       const slot = el('div', 'bslot');
-      if (u) { slot.innerHTML = `<div class="stars">${'★'.repeat(u.star)}</div><img src="${D.SPRITE(u.dex)}">`; slot.title = `${u.name} ${'★'.repeat(u.star)}`; }
+      if (u) { slot.innerHTML = `<div class="stars">${'★'.repeat(u.star)}</div><img draggable="false" src="${D.SPRITE(u.dex)}">`; tt(slot, () => unitTip(u)); }
       box.appendChild(slot);
     });
     $('sellzone').classList.remove('show');
@@ -224,31 +373,37 @@
     if (!others.length) return exitScout();
     let idx = others.findIndex(p => p.id === scout.pid);
     if (idx < 0) idx = 0;
-    const next = others[(idx + dir + others.length) % others.length];
-    client.send({ type: 'scout', pid: next.id });
+    client.send({ type: 'scout', pid: others[(idx + dir + others.length) % others.length].id });
   }
   function exitScout() {
     if (!scout) return;
     scout = null;
     $('combat-title').classList.add('hidden');
-    if (S) { renderSynergies(); if (mode === 'plan') renderPlanBoard(); }
+    if (S) { renderSynergies(); if (mode === 'plan') renderPlanBoard(); updateBadges(); }
   }
 
-  function onCellClick(r, c) {
-    if (scout) return;
-    if (mode !== 'plan' || !S || !S.you.alive) return;
-    if (r < 4) return;
+  // ---------- planificación ----------
+  function boardClick(r, c) {
+    if (scout || mode !== 'plan' || !S || !S.you.alive || r < 4) return;
     const ownR = 7 - r;
     const u = S.you.board[ownR][c];
-    if (selItem !== null && u) { client.send({ type: 'equip', iid: u.iid, idx: selItem }); selItem = null; return; }
+    if (selItem !== null && u) { client.send({ type: 'equip', iid: u.iid, idx: selItem }); selItem = null; renderItems(); return; }
+    if (selComp !== null && u) { client.send({ type: 'equipComp', iid: u.iid, idx: selComp }); selComp = null; renderItems(); return; }
     if (sel) { client.send({ type: 'move', iid: sel.iid, to: 'board', r: ownR, c }); sel = null; updateSelVisual(); return; }
+    if (u) { sel = { iid: u.iid, unit: u }; updateSelVisual(); showUnitInfo(u); }
+  }
+  function benchClick(i) {
+    if (scout || !S || !S.you.alive || mode === 'safari') return;
+    const u = S.you.bench[i];
+    if (selItem !== null && u) { client.send({ type: 'equip', iid: u.iid, idx: selItem }); selItem = null; renderItems(); return; }
+    if (selComp !== null && u) { client.send({ type: 'equipComp', iid: u.iid, idx: selComp }); selComp = null; renderItems(); return; }
+    if (sel) { client.send({ type: 'move', iid: sel.iid, to: 'bench', i }); sel = null; updateSelVisual(); return; }
     if (u) { sel = { iid: u.iid, unit: u }; updateSelVisual(); showUnitInfo(u); }
   }
   function renderPlanBoard() {
     ensureCells();
-    $('combat-title').classList.add('hidden');
+    if (!scout) $('combat-title').classList.add('hidden');
     clearBoardUnits();
-    // unidades propias en su mitad
     for (let ownR = 0; ownR < 4; ownR++) for (let c = 0; c < 7; c++) {
       const u = S.you.board[ownR][c];
       if (u) boardEl.appendChild(planUnitEl(u, 7 - ownR, c, false));
@@ -258,48 +413,43 @@
     if (sel) $('sellval').textContent = '+' + sellVal(sel.unit) + ' oro';
   }
   function sellVal(u) { const c = u.cost; return u.star === 1 ? c : u.star === 2 ? c * 3 - 1 : c * 6; }
-  function planUnitEl(u, r, c, enemy) {
+  function planUnitEl(u, r, c, readOnly) {
     const d = el('div', 'unit' + (sel && sel.iid === u.iid ? ' sel' : ''));
     d.style.left = cellX(r, c) + 'px'; d.style.top = (cellY(r) - 10) + 'px';
-    d.innerHTML = `<div class="stars">${'★'.repeat(u.star)}</div><img class="sprite" src="${D.SPRITE(u.dex)}">
-      <div class="itemdots">${u.items.map(k => ITEMS[k] ? ITEMS[k].emoji : '').join('')}${u.stone ? '🪨' : ''}</div>`;
-    d.title = `${u.name} ${'★'.repeat(u.star)} — ${u.ab.name}: ${u.ab.desc}`;
-    d.onclick = (e) => { e.stopPropagation(); onCellClick(r, c); };
+    d.dataset.iid = u.iid; d.dataset.r = r; d.dataset.c = c;
+    d.innerHTML = `<div class="stars">${'★'.repeat(u.star)}</div><img class="sprite" draggable="false" src="${D.SPRITE(u.dex)}">
+      <div class="itemdots">${u.items.map(k => ITEMS[k] ? ITEMS[k].emoji : (COMPONENTS[k] ? COMPONENTS[k].emoji : '')).join('')}${u.stone ? '🪨' : ''}</div>`;
+    tt(d, () => unitTip(u));
+    if (!readOnly) d.onpointerdown = (e) => { e.stopPropagation(); if (mode === 'plan' && !scout && S.you.alive) startDrag(e, { kind: 'unit', unit: u }, d, () => boardClick(r, c)); };
     return d;
   }
   function renderBench() {
     const box = $('bench'); box.innerHTML = '';
     S.you.bench.forEach((u, i) => {
       const slot = el('div', 'bslot' + (sel && u && sel.iid === u.iid ? ' sel' : ''));
+      slot.dataset.i = i;
       if (u) {
-        slot.innerHTML = `<div class="stars">${'★'.repeat(u.star)}</div><img src="${D.SPRITE(u.dex)}">`;
-        slot.title = `${u.name} ${'★'.repeat(u.star)} — ${u.ab.name}: ${u.ab.desc}`;
+        slot.dataset.iid = u.iid;
+        slot.innerHTML = `<div class="stars">${'★'.repeat(u.star)}</div><img draggable="false" src="${D.SPRITE(u.dex)}">`;
+        tt(slot, () => unitTip(u));
+        slot.onpointerdown = (e) => { if (canAct() && mode !== 'safari') startDrag(e, { kind: 'unit', unit: u }, slot, () => benchClick(i)); };
+      } else {
+        slot.onclick = () => { if (!justDragged()) benchClick(i); };
       }
-      slot.onclick = () => {
-        if (mode !== 'plan') return;
-        if (selItem !== null && u) { client.send({ type: 'equip', iid: u.iid, idx: selItem }); selItem = null; return; }
-        if (sel) { client.send({ type: 'move', iid: sel.iid, to: 'bench', i }); sel = null; updateSelVisual(); return; }
-        if (u) { sel = { iid: u.iid, unit: u }; updateSelVisual(); showUnitInfo(u); renderPlanBoard(); }
-      };
       box.appendChild(slot);
     });
   }
-  function updateSelVisual() { if (S && mode === 'plan') renderPlanBoard(); }
+  function updateSelVisual() { if (S && mode === 'plan' && !scout) renderPlanBoard(); }
   function showUnitInfo(u) {
     const box = $('unitinfo'); box.classList.remove('hidden');
-    box.innerHTML = `<b>${u.name} ${'★'.repeat(u.star)}</b> · ${u.cost}💰<br>
-      ${u.types.map(t => `<span style="color:${TYPE_COLORS[t]}">${t}</span>`).join(' · ')}${u.cls ? ' · ' + u.cls : ''}
-      <div class="ab"><b>${u.ab.name}</b>: ${u.ab.desc}</div>
-      ${u.items.length ? '<div class="ab">Objetos: ' + u.items.map(k => ITEMS[k].emoji + ' ' + ITEMS[k].name).join(', ') + '</div>' : ''}`;
+    box.innerHTML = unitTip(u);
   }
-  $('sellzone').onclick = () => { if (sel) { client.send({ type: 'sell', iid: sel.iid }); sel = null; } };
+  $('sellzone').onclick = () => { if (sel && !justDragged()) { client.send({ type: 'sell', iid: sel.iid }); sel = null; } };
 
   // ---------- combate ----------
   const unitEls = new Map();
   function renderCombat(snap) {
     ensureCells();
-    $('bench').innerHTML = '';
-    $('sellzone').classList.remove('show');
     const flip = combat && combat.youSide === 1;
     const seen = new Set();
     snap.units.forEach(u => {
@@ -310,10 +460,13 @@
       let d = unitEls.get(u.uid);
       if (!d) {
         d = el('div', 'unit' + (u.side === mySide ? '' : ' enemy'));
+        const its = (u.items || []).map(k => ITEMS[k] ? ITEMS[k].emoji : (COMPONENTS[k] ? COMPONENTS[k].emoji : '')).join('');
         d.innerHTML = `<div class="stars">${'★'.repeat(u.star)}</div>
           <div class="bars"><div class="hpb"><i></i></div><div class="enb"><i></i></div></div>
-          <img class="sprite" src="${D.SPRITE(u.dex)}"><div class="sts"></div>`;
-        d.title = u.name;
+          <img class="sprite" draggable="false" src="${D.SPRITE(u.dex)}"><div class="sts"></div>
+          <div class="citems">${its}</div>`;
+        tt(d, () => `<div class="tname">${esc(u.name)} <span class="gold">${'★'.repeat(u.star)}</span></div>` +
+          ((u.items || []).length ? `<div class="tab">${u.items.map(k => itemMini(k)).join('<br>')}</div>` : '<div class="trole">Sin objetos</div>'));
         boardEl.appendChild(d); unitEls.set(u.uid, d);
       }
       d.classList.toggle('dead', u.dead);
@@ -325,7 +478,6 @@
       if (u.st.par) st.push('⚡'); if (u.st.stun) st.push('💫'); if (u.st.fear) st.push('😱'); if (u.st.shield) st.push('🛡');
       d.querySelector('.sts').textContent = st.join('');
     });
-    // efectos flotantes
     (snap.fx || []).forEach(fx => {
       const tgt = snap.units.find(u => u.uid === fx.uid); if (!tgt) return;
       let r = tgt.r, c = tgt.c; if (flip) { r = 7 - r; c = 6 - c; }
@@ -336,7 +488,6 @@
       else if (fx.t === 'cast') floatText(r, c, '✨', '#fff');
       else if (fx.t === 'revive') floatText(r, c, '¡REVIVE!', '#ffd54a');
     });
-    // limpiar unidades de combates anteriores
     for (const [uid, d] of unitEls) { if (!seen.has(uid)) { d.remove(); unitEls.delete(uid); } }
   }
   function floatText(r, c, text, color) {
@@ -348,14 +499,17 @@
     setTimeout(() => f.remove(), 900);
   }
 
-  // ---------- resultados / modales ----------
+  // ---------- modales ----------
+  let modalToken = 0;
   function modal(html, opts = {}) {
+    const my = ++modalToken;
     $('modal').innerHTML = html;
     $('overlay').classList.add('show');
-    if (opts.autoclose) setTimeout(closeModal, opts.autoclose);
+    $('overlay').dataset.sticky = opts.sticky ? '1' : '';
+    if (opts.autoclose) setTimeout(() => { if (modalToken === my) closeModal(); }, opts.autoclose);
   }
   function closeModal() { $('overlay').classList.remove('show'); }
-  $('overlay').onclick = (e) => { if (e.target === $('overlay')) closeModal(); };
+  $('overlay').onclick = (e) => { if (e.target === $('overlay') && !$('overlay').dataset.sticky) closeModal(); };
 
   function showResults(msg) {
     unitEls.forEach(d => d.remove()); unitEls.clear();
@@ -364,7 +518,10 @@
   }
   function showGameOver(msg) {
     const lines = msg.standings.map(s => `<div class="resultline">${s.place === 1 ? '🏆' : '#' + s.place} <b>${esc(s.name)}</b> · ${s.wins} victorias</div>`).join('');
-    modal(`<h3>🏁 Fin de la partida</h3>${lines}<br><button onclick="location.reload()">Volver al inicio</button>`);
+    modal(`<h3>🏁 Fin de la partida</h3>${lines}<br>
+      <div style="display:flex;gap:10px;justify-content:center;margin-top:10px">
+        <button onclick="location.reload()" style="font-size:16px;padding:10px 22px">🏠 Volver al inicio</button>
+      </div>`, { sticky: true });
   }
   function checkChoices() {
     if (!S || !S.you.pendingChoices.length) return;
@@ -372,14 +529,14 @@
     if (ch.type === 'eevee') {
       const v = D.EEVEE_VARIANTS;
       modal(`<h3>✨ ¡Eevee va a evolucionar! Elige:</h3><div class="choices">` +
-        Object.entries(v).map(([k, x]) => `<div class="choice" data-v="${k}"><img src="${D.SPRITE(x.dex)}"><b>${x.name}</b><br><span style="font-size:11px;color:var(--dim)">${x.types[0]} · ${x.cls}<br>${x.ab.name}</span></div>`).join('') + '</div>');
+        Object.entries(v).map(([k, x]) => `<div class="choice" data-v="${k}"><img draggable="false" src="${D.SPRITE(x.dex)}"><b>${x.name}</b><br><span style="font-size:11px;color:var(--dim)">${x.types[0]} · ${x.cls}<br>${x.ab.name}</span></div>`).join('') + '</div>');
       $('modal').querySelectorAll('.choice').forEach(c => c.onclick = () => { client.send({ type: 'eevee', iid: ch.iid, variant: c.dataset.v }); closeModal(); });
     } else if (ch.type === 'mewcopy') {
       const units = [];
       S.you.board.forEach(row => row.forEach(u => { if (u) units.push(u); }));
       S.you.bench.forEach(u => { if (u) units.push(u); });
       modal(`<h3>🧬 Mew te permite copiar una de tus unidades (recibes 1 copia 1★)</h3><div class="choices">` +
-        units.map(u => `<div class="choice" data-iid="${u.iid}"><img src="${D.SPRITE(u.dex)}"><b>${u.name}</b></div>`).join('') + '</div>');
+        units.map(u => `<div class="choice" data-iid="${u.iid}"><img draggable="false" src="${D.SPRITE(u.dex)}"><b>${u.name}</b></div>`).join('') + '</div>');
       $('modal').querySelectorAll('.choice').forEach(c => c.onclick = () => { client.send({ type: 'mewcopy', iid: +c.dataset.iid }); closeModal(); });
     }
   }
@@ -396,7 +553,8 @@
     msg.units.forEach((u, i) => {
       const carryTxt = u.carry.full ? ITEMS[u.carry.full].emoji + ' ' + ITEMS[u.carry.full].name : COMPONENTS[u.carry.comp].emoji + ' ' + COMPONENTS[u.carry.comp].name;
       const d = el('div', 'swild' + (u.takenBy ? ' taken' : ''));
-      d.innerHTML = `${u.takenBy ? `<div class="takenby">${esc(nameOf(u.takenBy, msg))}</div>` : ''}<img src="${D.SPRITE(u.dex)}"><div><b>${u.name}</b> · ${u.cost}💰</div><div class="carry">${carryTxt}</div>`;
+      d.innerHTML = `${u.takenBy ? `<div class="takenby">${esc(nameOf(u.takenBy, msg))}</div>` : ''}<img draggable="false" src="${D.SPRITE(u.dex)}"><div><b>${u.name}</b> · ${u.cost}💰</div><div class="carry">${carryTxt}</div>`;
+      tt(d, (u.carry.full ? itemTip(u.carry.full) : compTip(u.carry.comp)));
       d.onclick = () => { if (released && !iPicked && !u.takenBy) client.send({ type: 'safariPick', idx: i }); };
       grid.appendChild(d);
     });
@@ -405,13 +563,12 @@
   }
   function nameOf(pid, msg) { const o = msg.order.find(x => x.id === pid); return o ? o.name : '?'; }
 
-  // ---------- botones de economía ----------
+  // ---------- botones ----------
   $('btn-xp').onclick = () => client.send({ type: 'xp' });
   $('btn-reroll').onclick = () => client.send({ type: 'reroll' });
   $('btn-lock').onclick = () => client.send({ type: 'lock' });
 
   // ---------- timer ----------
-  let safariEndsAt = 0;
   setInterval(() => {
     const fill = $('bigtimer-fill'), num = $('bigtimer-num');
     if (mode === 'combat') {
@@ -433,12 +590,13 @@
     fill.classList.toggle('urgent', left <= 8);
   }, 300);
 
-  // teclas rápidas: D = reroll, F = xp, E = vender selección
+  // teclas: D = reroll, F = xp, E = vender selección, Esc = cancelar/volver
   document.addEventListener('keydown', (e) => {
-    if (mode !== 'plan' || !S) return;
+    if (!S) return;
+    if (e.key === 'Escape') { if (scout) { exitScout(); return; } sel = null; selItem = null; selComp = null; renderAll(); return; }
+    if (mode !== 'plan' && mode !== 'combat') return;
     if (e.key === 'd' || e.key === 'D') client.send({ type: 'reroll' });
     if (e.key === 'f' || e.key === 'F') client.send({ type: 'xp' });
     if ((e.key === 'e' || e.key === 'E') && sel) { client.send({ type: 'sell', iid: sel.iid }); sel = null; }
-    if (e.key === 'Escape') { if (scout) { exitScout(); return; } sel = null; selItem = null; selComp = null; renderAll(); }
   });
 })();

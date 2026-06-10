@@ -722,7 +722,7 @@
     const s = {
       t: Math.round(sim.t * 10) / 10, over: sim.over, winner: sim.winner,
       units: sim.units.map(u => ({
-        uid: u.uid, side: u.side, dex: u.dex, name: u.name, star: u.star, dead: u.dead,
+        uid: u.uid, side: u.side, dex: u.dex, name: u.name, star: u.star, dead: u.dead, items: u.items,
         hp: Math.max(0, Math.round(u.hp)), maxHp: u.maxHp, en: Math.round(u.energy), enMax: u.energyMax,
         r: u.pos.r, c: u.pos.c,
         st: { burn: !!(u.st.burn), slp: (u.st.sleep > 0 || u.snorlaxSleep > 0), frz: u.st.freeze > 0, par: u.st.par > 0, stun: u.st.stun > 0, fear: u.st.fear > 0, shield: shieldTotal(u) > 0 },
