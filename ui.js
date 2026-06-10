@@ -12,6 +12,7 @@
   let sel = null;          // {iid, zone, ...}
   let selItem = null, selComp = null;
   let mode = 'plan';
+  let scout = null;        // datos de scouting del rival
 
   // ---------- geometría del tablero ----------
   const CW = 66, CH = 60, OX = 14, OY = 12;
@@ -58,7 +59,8 @@
       case 'lobby': renderLobby(msg); break;
       case 'gamestart': show('screen-game'); break;
       case 'state': S = msg; if (mode !== 'combat' || msg.state === 'plan') { mode = msg.state === 'combat' ? mode : 'plan'; } if (msg.state === 'plan') { mode = 'plan'; $('safari').classList.remove('show'); } renderAll(); checkChoices(); break;
-      case 'combat_start': mode = 'combat'; combat = msg; lastSnap = null; $('combat-title').textContent = `⚔ ${msg.aName} vs ${msg.bName}`; $('combat-title').classList.remove('hidden'); clearBoardUnits(); break;
+      case 'combat_start': mode = 'combat'; combat = msg; lastSnap = null; scout = null; $('combat-title').textContent = `⚔ ${msg.aName} vs ${msg.bName}`; $('combat-title').classList.remove('hidden'); clearBoardUnits(); break;
+      case 'scoutData': scout = msg; if (mode === 'plan' || mode === 'safari') renderScoutBoard(); break;
       case 'combat_snap': lastSnap = msg.snap; renderCombat(msg.snap); break;
       case 'combat_results': showResults(msg); break;
       case 'safari': mode = 'safari'; renderSafari(msg); break;
@@ -84,9 +86,25 @@
     $('btn-lock').textContent = S.you.locked ? '🔓 Desbloquear' : '🔒 Bloquear';
     $('btn-xp').disabled = S.you.gold < 4 || S.you.xpNext === null;
     $('btn-reroll').disabled = S.you.gold < 2;
+    const inc = S.you.lastIncome;
+    $('hud-inc').textContent = inc ? `+${inc.total}/ronda (int. ${inc.interest} · racha ${inc.streak})` : '';
+    $('odds').innerHTML = (D.SHOP_ODDS[Math.min(S.you.level, 9)] || []).map((o, i) => `<span class="o${i + 1}">${o}%</span>`).join('');
+    renderRoundTrack();
     renderShop(); renderPlayers(); renderSynergies(); renderItems();
-    if (mode === 'plan') renderPlanBoard();
+    if (mode === 'plan') { if (scout) { client.send({ type: 'scout', pid: scout.pid }); } else renderPlanBoard(); }
     if (!S.you.alive) $('hud-msg').textContent = '💀 Eliminado — modo espectador';
+  }
+
+  // indicador de rondas de la fase (estilo TFT)
+  function renderRoundTrack() {
+    const box = $('roundtrack'); box.innerHTML = '';
+    const icons = S.round.phase === 1 ? ['🐾', '🐾', '🐾'] : ['🌿', '⚔', '⚔', '⚔', '⚔', '🐾'];
+    const cur = S.round.num - 1;
+    icons.forEach((ic, i) => {
+      const d = el('div', 'rt' + (i === cur ? ' cur' : i < cur ? ' done' : ''), ic);
+      d.title = `Ronda ${S.round.phase}-${i + 1}: ` + (ic === '🌿' ? 'Safari' : ic === '⚔' ? 'PvP' : 'PvE');
+      box.appendChild(d);
+    });
   }
 
   function renderShop() {
@@ -105,7 +123,9 @@
   function renderPlayers() {
     const box = $('playerlist'); box.innerHTML = '';
     S.players.slice().sort((a, b) => b.hp - a.hp || (a.alive ? -1 : 1)).forEach(p => {
-      const d = el('div', 'pl' + (p.alive ? '' : ' dead'));
+      const d = el('div', 'pl' + (p.alive ? '' : ' dead') + (p.id !== myPid && p.alive ? ' scoutable' : ''));
+      if (p.id !== myPid && p.alive) { d.title = 'Clic para ver su tablero'; d.onclick = () => { if (mode === 'plan' || mode === 'safari') client.send({ type: 'scout', pid: p.id }); }; }
+      else if (p.id === myPid) d.onclick = () => exitScout();
       d.innerHTML = `<div class="nm"><span>${esc(p.name)}${p.id === myPid ? ' ⭐' : ''}${p.connected ? '' : ' 🔌'}</span><span>${p.alive ? p.hp + '❤' : '#' + p.place}</span></div>
         <div class="hpbar"><i style="width:${p.hp}%"></i></div>
         <div class="mini">${p.boardPreview.map(u => `<img src="${D.SPRITE(u.dex)}" title="${u.star}★">`).join('')}</div>
@@ -114,9 +134,10 @@
     });
   }
 
-  function renderSynergies() {
+  function renderSynergies(src, owner) {
     const box = $('synlist'); box.innerHTML = '';
-    const syns = Object.entries(S.you.synergies).filter(([k, v]) => v.count > 0)
+    if (owner) box.appendChild(el('div', '', `<b style="color:var(--gold);font-size:12px">🔍 ${esc(owner)}</b>`));
+    const syns = Object.entries(src || S.you.synergies).filter(([k, v]) => v.count > 0)
       .sort((a, b) => (b[1].tier - a[1].tier) || (b[1].count - a[1].count));
     syns.forEach(([k, v]) => {
       const def = SYNERGIES[k];
@@ -168,7 +189,47 @@
       boardEl.appendChild(cell);
     }
   }
+  // ---------- scouting (estilo TFT) ----------
+  function renderScoutBoard() {
+    if (!scout) return;
+    ensureCells(); clearBoardUnits();
+    const ct = $('combat-title');
+    ct.classList.remove('hidden');
+    ct.innerHTML = `🔍 Tablero de <b>${esc(scout.name)}</b> · Nv ${scout.level} · ${scout.hp}❤
+      <button id="scout-prev" title="Anterior">‹</button><button id="scout-next" title="Siguiente">›</button><button id="scout-back">Volver (Esc)</button>`;
+    document.getElementById('scout-back').onclick = exitScout;
+    document.getElementById('scout-prev').onclick = () => cycleScout(-1);
+    document.getElementById('scout-next').onclick = () => cycleScout(1);
+    for (let ownR = 0; ownR < 4; ownR++) for (let c = 0; c < 7; c++) {
+      const u = scout.board[ownR][c];
+      if (u) { const d = planUnitEl(u, 7 - ownR, c, false); d.onclick = (e) => e.stopPropagation(); boardEl.appendChild(d); }
+    }
+    const box = $('bench'); box.innerHTML = '';
+    scout.bench.forEach(u => {
+      const slot = el('div', 'bslot');
+      if (u) { slot.innerHTML = `<div class="stars">${'★'.repeat(u.star)}</div><img src="${D.SPRITE(u.dex)}">`; slot.title = `${u.name} ${'★'.repeat(u.star)}`; }
+      box.appendChild(slot);
+    });
+    $('sellzone').classList.remove('show');
+    renderSynergies(scout.synergies, scout.name);
+  }
+  function cycleScout(dir) {
+    const others = S.players.filter(p => p.alive && p.id !== myPid);
+    if (!others.length) return exitScout();
+    let idx = others.findIndex(p => p.id === scout.pid);
+    if (idx < 0) idx = 0;
+    const next = others[(idx + dir + others.length) % others.length];
+    client.send({ type: 'scout', pid: next.id });
+  }
+  function exitScout() {
+    if (!scout) return;
+    scout = null;
+    $('combat-title').classList.add('hidden');
+    if (S) { renderSynergies(); if (mode === 'plan') renderPlanBoard(); }
+  }
+
   function onCellClick(r, c) {
+    if (scout) return;
     if (mode !== 'plan' || !S || !S.you.alive) return;
     if (r < 4) return;
     const ownR = 7 - r;
@@ -346,13 +407,25 @@
   // ---------- timer ----------
   let safariEndsAt = 0;
   setInterval(() => {
-    let ends = 0;
-    if (mode === 'safari') ends = safariEndsAt;
+    const fill = $('bigtimer-fill'), num = $('bigtimer-num');
+    if (mode === 'combat') {
+      $('timer').textContent = lastSnap ? lastSnap.t.toFixed(0) + 's' : '⚔';
+      const t = lastSnap ? lastSnap.t : 0;
+      num.textContent = '⚔ ' + t.toFixed(0) + 's';
+      fill.style.width = Math.min(100, t / D.CFG.COMBAT_MAX * 100) + '%';
+      fill.classList.toggle('urgent', t > D.CFG.COMBAT_MAX - 10);
+      return;
+    }
+    let ends = 0, total = D.CFG.PLAN_TIME;
+    if (mode === 'safari') { ends = safariEndsAt; total = D.CFG.SAFARI_TIME; }
     else if (S && S.round) ends = S.round.endsAt;
-    if (mode === 'combat') { $('timer').textContent = lastSnap ? lastSnap.t.toFixed(0) + 's' : '⚔'; return; }
-    const left = Math.max(0, Math.ceil((ends - Date.now()) / 1000));
+    const leftMs = Math.max(0, ends - Date.now());
+    const left = Math.ceil(leftMs / 1000);
     $('timer').textContent = left;
-  }, 400);
+    num.textContent = (mode === 'safari' ? '🌿 ' : '🛒 ') + left + 's';
+    fill.style.width = Math.min(100, leftMs / (total * 1000) * 100) + '%';
+    fill.classList.toggle('urgent', left <= 8);
+  }, 300);
 
   // teclas rápidas: D = reroll, F = xp, E = vender selección
   document.addEventListener('keydown', (e) => {
@@ -360,6 +433,6 @@
     if (e.key === 'd' || e.key === 'D') client.send({ type: 'reroll' });
     if (e.key === 'f' || e.key === 'F') client.send({ type: 'xp' });
     if ((e.key === 'e' || e.key === 'E') && sel) { client.send({ type: 'sell', iid: sel.iid }); sel = null; }
-    if (e.key === 'Escape') { sel = null; selItem = null; selComp = null; renderAll(); }
+    if (e.key === 'Escape') { if (scout) { exitScout(); return; } sel = null; selItem = null; selComp = null; renderAll(); }
   });
 })();

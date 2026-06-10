@@ -77,6 +77,7 @@
       const p = entry.player;
       if (msg.type === 'start' && id === 'host' && this.state === 'lobby') { if (this.players.size >= 2) this.startGame(); else this.send(id, { type: 'toast', msg: 'Se necesitan al menos 2 jugadores' }); return; }
       if (msg.type === 'chat') { this.broadcast({ type: 'chat', from: p.name, text: String(msg.text).slice(0, 120) }); return; }
+      if (msg.type === 'scout' && (this.state === 'plan' || this.state === 'safari')) { this.sendScout(id, msg.pid); return; }
       // --- acciones de planificación ---
       if (this.state === 'plan' && p.alive) {
         let changed = true;
@@ -126,6 +127,16 @@
     removeAt(p, loc) { if (loc.zone === 'board') p.board[loc.r][loc.c] = null; else if (loc.i >= 0) p.bench[loc.i] = null; }
     placeAt(p, u, loc) { if (loc.zone === 'board') p.board[loc.r][loc.c] = u; else if (loc.i >= 0) p.bench[loc.i] = u; else { const s = C.findBenchSlot(p); if (s >= 0) p.bench[s] = u; } }
 
+    sendScout(requesterId, targetPid) {
+      const e = this.players.get(targetPid); if (!e) return;
+      const p = e.player;
+      this.send(requesterId, {
+        type: 'scoutData', pid: targetPid, name: p.name, hp: p.hp, level: p.level,
+        board: p.board.map(row => row.map(u => u ? this.serializeUnit(u) : null)),
+        bench: p.bench.slice(0, CFG.BENCH_SIZE).map(u => u ? this.serializeUnit(u) : null),
+        synergies: C.computeSynergies(C.boardUnits(p)),
+      });
+    }
     serializeUnit(u) {
       const d = C.unitDef(u.lineId, u.star, u.variant);
       return { iid: u.iid, lineId: u.lineId, star: u.star, variant: u.variant, stone: u.stone, items: u.items, name: C.unitName(u), dex: C.unitDex(u), cost: C.LINE[u.lineId].cost, types: d.types, cls: d.cls, ab: d.ab };
@@ -138,7 +149,7 @@
         round: { phase: this.phase, num: this.roundInPhase, label: `${this.phase}-${this.roundInPhase}`, kind: this.roundKind(), endsAt: this.planEndsAt || 0 },
         you: {
           id: p.id, name: p.name, hp: p.hp, gold: p.gold, level: p.level, xp: p.xp, xpNext: C.xpToNext(p),
-          alive: p.alive, locked: p.locked, boardCount: C.boardCount(p),
+          alive: p.alive, locked: p.locked, boardCount: C.boardCount(p), lastIncome: p._lastIncome || null,
           shop: p.shop.map(lid => lid ? { lineId: lid, name: C.LINE[lid].names[0], dex: C.LINE[lid].dex[0], cost: C.LINE[lid].cost, types: C.LINE[lid].types, cls: C.LINE[lid].cls, ab: C.LINE[lid].ab } : null),
           bench: p.bench.slice(0, CFG.BENCH_SIZE).map(u => u ? this.serializeUnit(u) : null),
           board: p.board.map(row => row.map(u => u ? this.serializeUnit(u) : null)),
