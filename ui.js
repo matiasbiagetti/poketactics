@@ -49,7 +49,11 @@
   function onNetStatus(st, info) {
     if (st === 'connected') $('home-status').textContent = '';
     if (st === 'disconnected') { toast('⚠ Conexión perdida con el anfitrión'); }
-    if (st === 'error') $('home-status').textContent = 'No se pudo conectar (' + (info || '') + '). ¿Código correcto?';
+    if (st === 'error') {
+      $('home-status').textContent = info === 'timeout'
+        ? 'No se pudo establecer la conexión P2P (suele ser el NAT del router o la red). Prueba: recargar y reintentar, otro navegador, o compartir internet desde el móvil.'
+        : 'No se pudo conectar (' + (info || '') + '). ¿Código correcto? ¿El anfitrión tiene la sala abierta?';
+    }
   }
   $('btn-start').onclick = () => client.send({ type: 'start' });
 

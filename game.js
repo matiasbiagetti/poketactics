@@ -5,6 +5,15 @@
 
   // ============== RED ==============
   const PREFIX = 'poketactics-jk-';
+  // STUN + TURN públicos: sin TURN, dos jugadores tras CGNAT/NAT simétrico no pueden conectarse
+  const ICE = {
+    iceServers: [
+      { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302', 'stun:global.stun.twilio.com:3478'] },
+      { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+      { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+      { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
+    ],
+  };
   function roomCode() { const chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; let s = ''; for (let i = 0; i < 5; i++) s += chars[Math.floor(Math.random() * chars.length)]; return s; }
 
   // Conexión local (el host también es jugador)
@@ -30,7 +39,7 @@
       this.local = new LocalConn();
       this.local.peerHandlers.data = onLocalMsg;
       this.addPlayer('host', hostName, this.local);
-      this.peer = new Peer(PREFIX + this.code, { debug: 1 });
+      this.peer = new Peer(PREFIX + this.code, { debug: 1, config: ICE });
       this.peer.on('open', () => onStatus('ready', this.code));
       this.peer.on('error', (e) => onStatus('error', e.type));
       this.peer.on('connection', (conn) => {
@@ -416,10 +425,11 @@
       else if (this.conn && this.conn.open) this.conn.send(msg);
     }
     join(code, name) {
-      this.peer = new Peer({ debug: 1 });
+      this.peer = new Peer({ debug: 1, config: ICE });
+      const watchdog = setTimeout(() => { if (!this.conn || !this.conn.open) this.onStatus('error', 'timeout'); }, 20000);
       this.peer.on('open', () => {
         this.conn = this.peer.connect(PREFIX + code.toUpperCase().trim(), { reliable: true });
-        this.conn.on('open', () => { this.conn.send({ type: 'join', name }); this.onStatus('connected'); });
+        this.conn.on('open', () => { clearTimeout(watchdog); this.conn.send({ type: 'join', name }); this.onStatus('connected'); });
         this.conn.on('data', (msg) => { if (msg.type === 'joined') this.pid = msg.pid; this.onMsg(msg); });
         this.conn.on('close', () => this.onStatus('disconnected'));
         this.conn.on('error', () => this.onStatus('error'));
