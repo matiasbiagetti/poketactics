@@ -22,6 +22,8 @@
   boardEl.style.width = (OX * 2 + 7 * CW + CW / 2) + 'px';
   boardEl.style.height = (OY * 2 + 8 * CH + 14) + 'px';
 
+  $('version').textContent = 'Versión ' + D.VERSION;
+
   function show(screen) { document.querySelectorAll('.screen').forEach(s => s.classList.remove('active')); $(screen).classList.add('active'); }
   function toast(msg, ms = 3500) { const t = el('div', 'toast', msg); $('toasts').appendChild(t); setTimeout(() => t.remove(), ms); }
 

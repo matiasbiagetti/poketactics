@@ -1,6 +1,7 @@
 // PokéTactics — data.js : datos del GDD v1.0 (roster, sinergias, tipos, objetos, PvE)
 // Compartido entre navegador (globals) y Node (module.exports)
 
+const VERSION = 'v1.1.0';
 const SPRITE = (dex) => `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${dex}.png`;
 
 // ---------- Constantes globales ----------
@@ -224,6 +225,6 @@ const TYPE_COLORS = {
   Tanque: '#5577aa', Atacante: '#cc5544', Especialista: '#9955cc', Velocista: '#44aa88', Soporte: '#dd9933',
 };
 
-const DATA = { CFG, SHOP_ODDS, TYPE_CHART, ROSTER, EEVEE_VARIANTS, GYARADOS, SYNERGIES, COMPONENTS, ITEMS, STONE, COMPONENT_STATS, WILD, PVE_ROUNDS, TYPE_COLORS, SPRITE };
+const DATA = { VERSION, CFG, SHOP_ODDS, TYPE_CHART, ROSTER, EEVEE_VARIANTS, GYARADOS, SYNERGIES, COMPONENTS, ITEMS, STONE, COMPONENT_STATS, WILD, PVE_ROUNDS, TYPE_COLORS, SPRITE };
 if (typeof module !== 'undefined') module.exports = DATA;
 if (typeof window !== 'undefined') window.PTDATA = DATA;
