@@ -1,7 +1,7 @@
 // PokéTactics — data.js : datos del GDD v1.0 (roster, sinergias, tipos, objetos, PvE)
 // Compartido entre navegador (globals) y Node (module.exports)
 
-const VERSION = 'v1.3.0';
+const VERSION = 'v1.4.0';
 const SPRITE = (dex) => `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${dex}.png`;
 
 // ---------- Constantes globales ----------

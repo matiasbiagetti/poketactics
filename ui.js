@@ -87,10 +87,13 @@
   const canAct = () => S && S.you.alive && (mode === 'plan' || mode === 'combat') && !scout;
   function startDrag(e, info, srcEl, clickFn) {
     if (e.button !== undefined && e.button !== 0) return;
-    drag = { ...info, sx: e.clientX, sy: e.clientY, moved: false, clickFn };
+    const rect = srcEl.getBoundingClientRect();
+    drag = { ...info, sx: e.clientX, sy: e.clientY, moved: false, clickFn, srcEl, dx: e.clientX - rect.left, dy: e.clientY - rect.top };
     const g = srcEl.cloneNode(true); g.classList.add('dragghost');
-    g.style.left = (e.clientX - 28) + 'px'; g.style.top = (e.clientY - 30) + 'px';
+    g.style.width = rect.width + 'px'; g.style.height = rect.height + 'px';
+    g.style.left = (e.clientX - drag.dx) + 'px'; g.style.top = (e.clientY - drag.dy) + 'px';
     document.body.appendChild(g); drag.ghost = g;
+    srcEl.style.opacity = '.35';
     if (info.kind === 'unit') {
       $('sellzone').classList.add('show'); $('sellval').textContent = '+' + sellVal(info.unit) + ' oro';
       $('shopbar').classList.add('sellmode'); $('shopbar').dataset.sellval = sellVal(info.unit);
@@ -101,11 +104,12 @@
   document.addEventListener('pointermove', (e) => {
     if (!drag) return;
     if (Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) > 6) drag.moved = true;
-    drag.ghost.style.left = (e.clientX - 28) + 'px'; drag.ghost.style.top = (e.clientY - 30) + 'px';
+    drag.ghost.style.left = (e.clientX - drag.dx) + 'px'; drag.ghost.style.top = (e.clientY - drag.dy) + 'px';
   });
   document.addEventListener('pointerup', (e) => {
     if (!drag) return;
     const d = drag; drag = null; d.ghost.remove();
+    if (d.srcEl) d.srcEl.style.opacity = '';
     lastDragEnd = Date.now();
     $('shopbar').classList.remove('sellmode');
     if (!sel) $('sellzone').classList.remove('show');
@@ -170,6 +174,15 @@
     }
   }
   $('btn-start').onclick = () => client.send({ type: 'start' });
+  $('btn-copy').onclick = async () => {
+    const code = $('lobby-code').textContent.trim();
+    try { await navigator.clipboard.writeText(code); toast('📋 Código copiado: ' + code, 2000); }
+    catch (_) {
+      const ta = document.createElement('textarea'); ta.value = code; document.body.appendChild(ta);
+      ta.select(); try { document.execCommand('copy'); toast('📋 Código copiado: ' + code, 2000); } catch (e) { toast('No se pudo copiar, selecciónalo a mano', 2500); }
+      ta.remove();
+    }
+  };
 
   // ---------- mensajes ----------
   function onMsg(msg) {
@@ -228,7 +241,7 @@
     $('odds').innerHTML = (D.SHOP_ODDS[Math.min(S.you.level, 9)] || []).map((o, i) => `<span class="o${i + 1}">${o}%</span>`).join('');
     renderRoundTrack();
     renderShop(); renderPlayers(); renderSynergies(); renderItems();
-    if (mode === 'plan') { if (scout) client.send({ type: 'scout', pid: scout.pid }); else renderPlanBoard(); }
+    if (mode === 'plan') { if (scout) renderScoutBoard(); else renderPlanBoard(); }
     else if (mode === 'combat') renderBench();
     updateBadges();
     if (!S.you.alive) $('hud-msg').textContent = '💀 Eliminado — modo espectador';
@@ -398,6 +411,7 @@
   }
   function exitScout() {
     scoutWanted = false;
+    client.send({ type: 'unscout' });
     if (!scout) return;
     scout = null;
     $('combat-title').classList.add('hidden');

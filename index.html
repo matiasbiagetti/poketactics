@@ -29,7 +29,10 @@
 <div id="screen-lobby" class="screen">
   <div class="logo" style="font-size:28px">Sala de espera</div>
   <div class="sub">Comparte este código con tus amigos:</div>
-  <div class="codebig" id="lobby-code">·····</div>
+  <div style="display:flex;align-items:center;gap:12px">
+    <div class="codebig" id="lobby-code" style="user-select:text">·····</div>
+    <button id="btn-copy" style="font-size:15px;padding:10px 16px">📋 Copiar</button>
+  </div>
   <div id="lobby-players"></div>
   <button id="btn-start" class="hidden" style="font-size:18px;padding:12px 30px">⚔️ Empezar partida</button>
   <div class="sub" id="lobby-hint">Esperando al anfitrión…</div>
@@ -100,9 +103,9 @@
     <div id="shopcards"></div>
     <div id="sellzone">💸 Vender<br><span id="sellval"></span></div>
   </div>
-  <div id="toasts"></div>
   <div id="overlay"><div class="modal" id="modal"></div></div>
 </div>
+<div id="toasts"></div>
 
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script src="data.js"></script>

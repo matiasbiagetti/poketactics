@@ -34,7 +34,7 @@
       this.rng = C.mulberry32(Date.now() % 2 ** 31);
       this.phase = 1; this.roundInPhase = 1; this.roundCount = 0;
       this.timers = []; this.sims = []; this.onStatus = onStatus;
-      this.lastOpp = {};
+      this.lastOpp = {}; this.scouting = {}; // requesterId -> pid observado
       // jugador local (host)
       this.local = new LocalConn();
       this.local.peerHandlers.data = onLocalMsg;
@@ -86,7 +86,8 @@
       const p = entry.player;
       if (msg.type === 'start' && id === 'host' && this.state === 'lobby') { if (this.players.size >= 2) this.startGame(); else this.send(id, { type: 'toast', msg: 'Se necesitan al menos 2 jugadores' }); return; }
       if (msg.type === 'chat') { this.broadcast({ type: 'chat', from: p.name, text: String(msg.text).slice(0, 120) }); return; }
-      if (msg.type === 'scout' && (this.state === 'plan' || this.state === 'safari')) { this.sendScout(id, msg.pid); return; }
+      if (msg.type === 'scout' && (this.state === 'plan' || this.state === 'safari')) { this.scouting[id] = msg.pid; this.sendScout(id, msg.pid); return; }
+      if (msg.type === 'unscout') { delete this.scouting[id]; return; }
       // --- ver el combate de otro jugador (scouting en batalla) ---
       if (msg.type === 'watch' && this.state === 'combat') { this.switchWatch(id, msg.pid); return; }
       // --- acciones de planificación (también permitidas durante el combate, estilo TFT) ---
@@ -222,8 +223,29 @@
         },
         players: this.publicPlayers(),
       });
+      // scouting en vivo: si alguien está mirando a este jugador, reenviarle el tablero actualizado
+      for (const [watcher, tgt] of Object.entries(this.scouting)) {
+        if (tgt === id && watcher !== id) this.sendScout(watcher, id);
+      }
     }
     syncAll() { for (const id of this.players.keys()) this.syncPlayer(id); }
+    // Auto-completar el tablero desde el banco (en orden) si hay hueco de nivel
+    autoFill(p) {
+      const cols = [3, 2, 4, 1, 5, 0, 6]; // centro hacia afuera
+      const place = (u, i) => {
+        for (const r of [3, 2, 1, 0]) for (const c of cols) {
+          if (!p.board[r][c]) { p.board[r][c] = u; p.bench[i] = null; return true; }
+        }
+        return false;
+      };
+      for (const pass of [0, 1]) { // 1º todo menos Magikarp 1★; 2º lo que quede
+        for (let i = 0; i < CFG.BENCH_SIZE && C.boardCount(p) < p.level; i++) {
+          const u = p.bench[i]; if (!u) continue;
+          if (pass === 0 && u.lineId === 'magikarp' && u.star === 1) continue;
+          place(u, i);
+        }
+      }
+    }
     roundKind() {
       if (this.phase === 1) return 'pve';
       if (this.roundInPhase === 1) return 'safari';
@@ -279,9 +301,12 @@
     // ---------- combate ----------
     beginCombat() {
       this.state = 'combat';
+      this.scouting = {};
       const kind = this.roundKind();
       this.sims = [];
       const alive = this.alivePlayers();
+      alive.forEach(p => this.autoFill(p));
+      this.syncAll();
       if (kind === 'pve') {
         const key = `${this.phase}-${this.roundInPhase}`;
         const pveKey = PVE_ROUNDS[key] ? key : `${Math.min(this.phase, 7)}-6`;
