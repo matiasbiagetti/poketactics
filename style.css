@@ -32,12 +32,12 @@ input { background: var(--panel); color: var(--text); border: 1px solid var(--li
 #topbar .kind { color: var(--dim); }
 #timer { font-size: 20px; font-weight: 800; color: var(--gold); min-width: 40px; }
 #gamemain { flex: 1; display: flex; min-height: 0; }
-#leftpanel { width: 185px; background: var(--panel); border-right: 1px solid var(--line); padding: 8px; overflow-y: auto; }
-#rightpanel { width: 215px; background: var(--panel); border-left: 1px solid var(--line); padding: 8px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+#leftpanel { width: 210px; background: var(--panel); border-right: 1px solid var(--line); padding: 10px; overflow-y: auto; }
+#rightpanel { width: 250px; background: var(--panel); border-left: 1px solid var(--line); padding: 10px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
 #centro { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; position: relative; min-width: 0; }
 
 /* sinergias */
-.syn { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 6px; margin-bottom: 4px; font-size: 12px; }
+.syn { display: flex; align-items: center; gap: 7px; padding: 5px 7px; border-radius: 6px; margin-bottom: 5px; font-size: 13px; }
 .syn.active { background: var(--panel2); }
 .syn .dot { width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 800; color: #111; }
 .syn .cnt { margin-left: auto; color: var(--dim); }
@@ -53,12 +53,12 @@ input { background: var(--panel); color: var(--text); border: 1px solid var(--li
 
 /* tablero */
 #board { position: relative; }
-.cell { position: absolute; width: 62px; height: 56px; border-radius: 30%; border: 1px solid #2c355e88; background: #181d3577; }
+.cell { position: absolute; width: 74px; height: 66px; border-radius: 30%; border: 1px solid #2c355e88; background: #181d3577; }
 .cell.own { background: #20284f88; border-color: #3a4576; }
 .cell.own:hover { background: #2c356a; cursor: pointer; }
 .cell.drop { background: #2e5d3f99 !important; }
-.unit { position: absolute; width: 62px; height: 70px; transition: left .18s linear, top .18s linear; pointer-events: auto; z-index: 5; }
-.unit img.sprite { width: 56px; height: 56px; image-rendering: pixelated; display: block; margin: 0 auto; filter: drop-shadow(0 2px 3px #000a); }
+.unit { position: absolute; width: 74px; height: 82px; transition: left .18s linear, top .18s linear; pointer-events: auto; z-index: 5; }
+.unit img.sprite { width: 66px; height: 66px; image-rendering: pixelated; display: block; margin: 0 auto; filter: drop-shadow(0 2px 3px #000a); }
 .unit.enemy img.sprite { }
 .unit .bars { position: absolute; left: 4px; right: 4px; top: 0; }
 .unit .hpb { height: 5px; background: #000a; border-radius: 3px; overflow: hidden; }
@@ -75,22 +75,23 @@ input { background: var(--panel); color: var(--text); border: 1px solid var(--li
 @keyframes rise { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(-34px); } }
 
 /* banco */
-#bench { display: flex; gap: 6px; margin-top: 10px; }
-.bslot { width: 58px; height: 62px; background: #181d35; border: 1px dashed var(--line); border-radius: 8px; position: relative; cursor: pointer; }
-.bslot img { width: 52px; height: 52px; image-rendering: pixelated; margin: 2px auto; display: block; }
+#bench { display: flex; gap: 8px; margin-top: 12px; }
+.bslot { width: 70px; height: 74px; background: #181d35; border: 1px dashed var(--line); border-radius: 8px; position: relative; cursor: pointer; }
+.bslot img { width: 62px; height: 62px; image-rendering: pixelated; margin: 3px auto; display: block; }
 .bslot .stars { position: absolute; top: -2px; width: 100%; text-align: center; font-size: 9px; color: var(--gold); }
 .bslot.sel { outline: 2px solid var(--gold); }
 
 /* tienda */
-#shopbar { background: var(--panel); border-top: 1px solid var(--line); padding: 8px 14px; display: flex; gap: 10px; align-items: center; }
+#shopbar { background: var(--panel); border-top: 1px solid var(--line); padding: 10px 16px; display: flex; gap: 12px; align-items: center; position: relative; }
+#shopbar.sellmode::after { content: '\1F4B8 Suelta aqu\00ED para VENDER (+' attr(data-sellval) ' oro)'; position: absolute; inset: 0; background: #5d2a2aee; border: 2px dashed #d88; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 22px; font-weight: 800; z-index: 20; }
 #eco { display: flex; flex-direction: column; gap: 4px; min-width: 120px; }
 #eco .gold { color: var(--gold); font-weight: 800; font-size: 20px; }
 #eco .lvl { font-size: 12px; color: var(--dim); }
 #shopcards { display: flex; gap: 8px; flex: 1; }
-.card { width: 108px; background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 5px; cursor: pointer; position: relative; }
+.card { width: 128px; background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 7px; cursor: grab; position: relative; }
 .card:hover { transform: translateY(-3px); }
-.card img { width: 54px; height: 54px; display: block; margin: 0 auto; image-rendering: pixelated; }
-.card .nm { font-size: 11px; text-align: center; font-weight: 600; white-space: nowrap; overflow: hidden; }
+.card img { width: 64px; height: 64px; display: block; margin: 0 auto; image-rendering: pixelated; }
+.card .nm { font-size: 12px; text-align: center; font-weight: 600; white-space: nowrap; overflow: hidden; }
 .card .ty { display: flex; gap: 2px; justify-content: center; margin-top: 2px; }
 .card .ty span { font-size: 9px; padding: 1px 4px; border-radius: 4px; color: #111; font-weight: 700; }
 .card .cost { position: absolute; top: 3px; right: 5px; font-weight: 800; color: var(--gold); font-size: 12px; }
@@ -106,7 +107,7 @@ input { background: var(--panel); color: var(--text); border: 1px solid var(--li
 .itembox { background: var(--panel2); border-radius: 8px; padding: 6px; }
 .itembox h4 { font-size: 11px; color: var(--dim); margin-bottom: 4px; }
 .itemrow { display: flex; flex-wrap: wrap; gap: 4px; }
-.itm { width: 34px; height: 34px; background: #11152a; border: 1px solid var(--line); border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 17px; cursor: pointer; }
+.itm { width: 42px; height: 42px; background: #11152a; border: 1px solid var(--line); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 22px; cursor: grab; }
 .itm.sel { outline: 2px solid var(--gold); }
 .unitinfo { background: var(--panel2); border-radius: 8px; padding: 8px; font-size: 12px; }
 .unitinfo b { font-size: 13px; }
@@ -145,10 +146,10 @@ input { background: var(--panel); color: var(--text); border: 1px solid var(--li
 .rt { width: 27px; height: 27px; border-radius: 50%; background: var(--panel2); border: 1px solid var(--line); display: flex; align-items: center; justify-content: center; font-size: 13px; opacity: .5; }
 .rt.cur { opacity: 1; border-color: var(--gold); box-shadow: 0 0 8px #ffd54a55; transform: scale(1.12); }
 .rt.done { opacity: .22; }
-#bigtimer { width: 240px; height: 18px; background: #00000088; border: 1px solid var(--line); border-radius: 10px; position: relative; overflow: hidden; }
+#bigtimer { width: 320px; height: 22px; background: #00000088; border: 1px solid var(--line); border-radius: 10px; position: relative; overflow: hidden; }
 #bigtimer-fill { position: absolute; inset: 0; width: 100%; background: linear-gradient(90deg, #3d7bd6, #8f6fff); transition: width .4s linear; }
 #bigtimer-fill.urgent { background: linear-gradient(90deg, #d65a3d, #d6b13d); }
-#bigtimer-num { position: absolute; inset: 0; text-align: center; font-size: 12px; font-weight: 800; line-height: 18px; text-shadow: 0 1px 2px #000; }
+#bigtimer-num { position: absolute; inset: 0; text-align: center; font-size: 14px; font-weight: 800; line-height: 22px; text-shadow: 0 1px 2px #000; }
 #odds { display: flex; gap: 5px; font-size: 10px; font-weight: 700; }
 #odds .o1 { color: var(--c1); } #odds .o2 { color: var(--c2); } #odds .o3 { color: var(--c3); }
 #odds .o4 { color: var(--c4); } #odds .o5 { color: var(--c5); }

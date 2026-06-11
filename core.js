@@ -131,9 +131,13 @@
     // colocar fusionada donde estaba la keeper
     if (keeper.where === 'board') p.board[keeper.r][keeper.c] = merged;
     else { const slot = findBenchSlot(p); if (slot >= 0) p.bench[slot] = merged; else p.bench[keeper.i] = merged; }
-    if (lineId === 'eevee' && star2 === 2) {
-      merged.variant = null;
-      p.pendingChoices.push({ type: 'eevee', iid: merged.iid });
+    if (lineId === 'eevee') {
+      // limpiar elecciones que apuntan a unidades consumidas por la fusión (bug del modal infinito)
+      const valid = new Set(allUnits(p).map(x => x.iid));
+      p.pendingChoices = (p.pendingChoices || []).filter(c => c.type !== 'eevee' || valid.has(c.iid));
+      if (star2 >= 2 && !merged.variant && !p.pendingChoices.some(c => c.type === 'eevee' && c.iid === merged.iid)) {
+        p.pendingChoices.push({ type: 'eevee', iid: merged.iid });
+      }
     }
     if (events) events.push({ t: 'merge', lineId, star: star2, name: unitName(merged) });
     // cascada (3x 2★ -> 3★)
@@ -243,6 +247,7 @@
     }
     const cu = {
       uid: 'u' + (IID++), side, lineId: isWild ? null : u.lineId, wildId: isWild ? u.wid : null,
+      srcIid: isWild ? null : u.iid,
       boss: isWild ? d.boss : null, star, name, dex,
       types: d.types.slice(), cls: d.cls,
       maxHp: Math.round(d.hp * starHp), hp: 0,
@@ -722,7 +727,7 @@
     const s = {
       t: Math.round(sim.t * 10) / 10, over: sim.over, winner: sim.winner,
       units: sim.units.map(u => ({
-        uid: u.uid, side: u.side, dex: u.dex, name: u.name, star: u.star, dead: u.dead, items: u.items,
+        uid: u.uid, side: u.side, dex: u.dex, name: u.name, star: u.star, dead: u.dead, items: u.items, srcIid: u.srcIid,
         hp: Math.max(0, Math.round(u.hp)), maxHp: u.maxHp, en: Math.round(u.energy), enMax: u.energyMax,
         r: u.pos.r, c: u.pos.c,
         st: { burn: !!(u.st.burn), slp: (u.st.sleep > 0 || u.snorlaxSleep > 0), frz: u.st.freeze > 0, par: u.st.par > 0, stun: u.st.stun > 0, fear: u.st.fear > 0, shield: shieldTotal(u) > 0 },

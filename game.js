@@ -99,21 +99,31 @@
           case 'reroll': if (p.gold >= CFG.REROLL_COST) { p.gold -= CFG.REROLL_COST; C.returnShopToPool(p.shop, this.pool); p.shop = C.rollShop(this.pool, p.level, this.rng); p.locked = false; } break;
           case 'xp': if (p.gold >= CFG.XP_COST && p.level < CFG.MAX_LEVEL) { p.gold -= CFG.XP_COST; C.addXp(p, CFG.XP_PER_BUY); } break;
           case 'lock': p.locked = !p.locked; break;
-          case 'sell': { const u = C.allUnits(p).find(x => x.iid === msg.iid); if (u && (!inCombat || onBench(u))) C.sellUnit(p, u, this.pool); break; }
+          case 'sell': { const u = C.allUnits(p).find(x => x.iid === msg.iid); if (u) C.sellUnit(p, u, this.pool); break; }
           case 'move': { if (inCombat) { const u = C.allUnits(p).find(x => x.iid === msg.iid); if (!u || msg.to !== 'bench' || !onBench(u)) { changed = false; break; } } this.handleMove(p, msg); break; }
-          case 'combine': C.combineComponents(p, msg.i | 0, msg.j | 0); break;
-          case 'equip': { const u = C.allUnits(p).find(x => x.iid === msg.iid); if (u && (!inCombat || onBench(u))) C.equipItem(p, u, msg.idx | 0); break; }
+          case 'combine': { // valida claves para evitar combinar índices desactualizados
+            const i = msg.i | 0, j = msg.j | 0;
+            if (msg.ki && p.components[i] !== msg.ki) { changed = false; break; }
+            if (msg.kj && p.components[j] !== msg.kj) { changed = false; break; }
+            C.combineComponents(p, i, j); break;
+          }
+          case 'equip': {
+            const u = C.allUnits(p).find(x => x.iid === msg.iid);
+            if (msg.k && p.fullItems[msg.idx | 0] !== msg.k) { changed = false; break; }
+            if (u) C.equipItem(p, u, msg.idx | 0); break;
+          }
           case 'equipComp': { // componente directo a unidad; autocombina con el componente que ya lleve (TFT)
             const u = C.allUnits(p).find(x => x.iid === msg.iid);
             const comp = p.components[msg.idx | 0];
-            if (!u || !comp || (inCombat && !onBench(u)) || (u.lineId === 'magikarp' && u.star === 1)) { changed = false; break; }
+            if (msg.k && comp !== msg.k) { changed = false; break; }
+            if (!u || !comp || (u.lineId === 'magikarp' && u.star === 1)) { changed = false; break; }
             const li = u.items.findIndex(k => COMPONENTS[k]);
             if (li >= 0) { const key = [u.items[li], comp].sort().join('+'); if (ITEMS[key]) { u.items[li] = key; p.components.splice(msg.idx | 0, 1); } else changed = false; }
             else if (u.items.length < CFG.MAX_ITEMS) { u.items.push(comp); p.components.splice(msg.idx | 0, 1); }
             else changed = false;
             break;
           }
-          case 'stone': { const u = C.allUnits(p).find(x => x.iid === msg.iid); if (u && (!inCombat || onBench(u))) C.useStone(p, u); break; }
+          case 'stone': { const u = C.allUnits(p).find(x => x.iid === msg.iid); if (u) C.useStone(p, u); break; }
           case 'eevee': { const u = C.allUnits(p).find(x => x.iid === msg.iid && x.lineId === 'eevee'); if (u && ['vaporeon', 'jolteon', 'flareon'].includes(msg.variant)) { u.variant = msg.variant; p.pendingChoices = p.pendingChoices.filter(c => c.iid !== msg.iid); } break; }
           case 'mewcopy': { const ch = p.pendingChoices.find(c => c.type === 'mewcopy'); const u = C.allUnits(p).find(x => x.iid === msg.iid); if (ch && u) { const slot = C.findBenchSlot(p); if (slot >= 0) { const nu = C.newUnit(u.lineId); p.bench[slot] = nu; C.tryMerge(p, u.lineId, 1, null); } p.pendingChoices = p.pendingChoices.filter(c => c !== ch); } break; }
           default: changed = false;
@@ -194,6 +204,9 @@
     syncPlayer(id) {
       const e = this.players.get(id); if (!e) return;
       const p = e.player;
+      // depurar elecciones de Eevee huérfanas (la unidad ya no existe o ya tiene variante)
+      p.pendingChoices = p.pendingChoices.filter(c => c.type !== 'eevee' ||
+        C.allUnits(p).some(x => x.iid === c.iid && x.lineId === 'eevee' && !x.variant));
       this.send(id, {
         type: 'state', state: this.state,
         round: { phase: this.phase, num: this.roundInPhase, label: `${this.phase}-${this.roundInPhase}`, kind: this.roundKind(), endsAt: this.planEndsAt || 0 },

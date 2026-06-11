@@ -14,12 +14,17 @@
   let selItem = null, selComp = null;
   let mode = 'plan';
   let scout = null;        // datos de scouting
+  let scoutWanted = false; // solo aceptar scoutData solicitado
   let safariEndsAt = 0;
+
+  // diagnóstico: errores visibles en pantalla
+  let lastErrToast = 0;
+  window.onerror = (m) => { if (Date.now() - lastErrToast > 5000) { lastErrToast = Date.now(); try { toast('⚠ Error: ' + m, 6000); } catch (_) { } } };
 
   $('version').textContent = 'Versión ' + D.VERSION;
 
   // ---------- geometría ----------
-  const CW = 66, CH = 60, OX = 14, OY = 12;
+  const CW = 78, CH = 70, OX = 14, OY = 12;
   const cellX = (r, c) => OX + c * CW + (r % 2) * (CW / 2);
   const cellY = (r) => OY + r * CH;
   const boardEl = $('board');
@@ -86,7 +91,10 @@
     const g = srcEl.cloneNode(true); g.classList.add('dragghost');
     g.style.left = (e.clientX - 28) + 'px'; g.style.top = (e.clientY - 30) + 'px';
     document.body.appendChild(g); drag.ghost = g;
-    if (info.kind === 'unit') { $('sellzone').classList.add('show'); $('sellval').textContent = '+' + sellVal(info.unit) + ' oro'; }
+    if (info.kind === 'unit') {
+      $('sellzone').classList.add('show'); $('sellval').textContent = '+' + sellVal(info.unit) + ' oro';
+      $('shopbar').classList.add('sellmode'); $('shopbar').dataset.sellval = sellVal(info.unit);
+    }
     hideTip();
     e.preventDefault();
   }
@@ -99,15 +107,20 @@
     if (!drag) return;
     const d = drag; drag = null; d.ghost.remove();
     lastDragEnd = Date.now();
+    $('shopbar').classList.remove('sellmode');
     if (!sel) $('sellzone').classList.remove('show');
     if (!d.moved) { if (d.clickFn) d.clickFn(); return; }
     d.ghost.style.display = 'none';
     const t = document.elementFromPoint(e.clientX, e.clientY);
     if (!t || !canAct()) return;
-    const sellz = t.closest && t.closest('#sellzone');
+    const sellz = (t.closest && t.closest('#sellzone')) || (d.kind === 'unit' && t.closest && t.closest('#shopbar'));
     const bs = t.closest && t.closest('.bslot');
     const un = t.closest && t.closest('.unit');
     const cell = t.closest && t.closest('.cell');
+    if (d.kind === 'shop') { // arrastrar carta de la tienda → comprar (TFT)
+      if (bs || cell || un || (t.closest && t.closest('#bench'))) client.send({ type: 'buy', slot: d.slot });
+      return;
+    }
     if (d.kind === 'unit') {
       sel = null;
       if (sellz) { client.send({ type: 'sell', iid: d.unit.iid }); return; }
@@ -121,8 +134,8 @@
       if (un && un.dataset.iid) iid = +un.dataset.iid;
       else if (bs && bs.dataset.iid) iid = +bs.dataset.iid;
       if (iid !== null) {
-        client.send({ type: d.kind === 'comp' ? 'equipComp' : 'equip', iid, idx: d.idx });
-        if (d.kind === 'comp') selComp = null; else selItem = null;
+        if (d.kind === 'comp') { client.send({ type: 'equipComp', iid, idx: d.idx, k: S.you.components[d.idx] }); selComp = null; }
+        else { client.send({ type: 'equip', iid, idx: d.idx, k: S.you.fullItems[d.idx] }); selItem = null; }
       }
     }
   });
@@ -160,6 +173,13 @@
 
   // ---------- mensajes ----------
   function onMsg(msg) {
+    try { _onMsg(msg); }
+    catch (e) {
+      console.error('Error procesando', msg.type, e);
+      if (Date.now() - lastErrToast > 5000) { lastErrToast = Date.now(); toast('⚠ Error UI (' + msg.type + '): ' + e.message, 6000); }
+    }
+  }
+  function _onMsg(msg) {
     switch (msg.type) {
       case 'joined': myPid = msg.pid; $('lobby-code').textContent = msg.code; show('screen-lobby'); break;
       case 'error': $('home-status').textContent = msg.err; toast(msg.err); break;
@@ -171,14 +191,14 @@
         renderAll(); checkChoices();
         break;
       case 'combat_start':
-        mode = 'combat'; combat = msg; lastSnap = null; scout = null;
+        mode = 'combat'; combat = msg; lastSnap = null; scout = null; scoutWanted = false;
         unitEls.forEach(d => d.remove()); unitEls.clear(); clearBoardUnits();
         $('combat-title').innerHTML = `⚔ <b>${esc(msg.aName)}</b>${msg.aLevel ? ` (Nv ${msg.aLevel})` : ''} vs <b>${esc(msg.bName)}</b>${msg.bLevel ? ` (Nv ${msg.bLevel})` : ''}`;
         $('combat-title').classList.remove('hidden');
         updateBadges();
         if (S) renderBench();
         break;
-      case 'scoutData': scout = msg; if (mode === 'plan' || mode === 'safari') { renderScoutBoard(); updateBadges(); } break;
+      case 'scoutData': if (!scoutWanted) break; scout = msg; if (mode === 'plan' || mode === 'safari') { renderScoutBoard(); updateBadges(); } break;
       case 'combat_snap': lastSnap = msg.snap; renderCombat(msg.snap); break;
       case 'combat_results': showResults(msg); break;
       case 'safari': mode = 'safari'; renderSafari(msg); break;
@@ -256,7 +276,7 @@
       cd.innerHTML = `<span class="cost">${card.cost}💰</span><img draggable="false" src="${D.SPRITE(card.dex)}"><div class="nm">${card.name}</div>
         <div class="ty">${card.types.map(t => `<span style="background:${TYPE_COLORS[t]}">${t}</span>`).join('')}${card.cls ? `<span style="background:${TYPE_COLORS[card.cls]}">${card.cls}</span>` : ''}</div>`;
       tt(cd, () => unitTip({ ...card, star: 1 }));
-      cd.onclick = () => { if (!justDragged()) client.send({ type: 'buy', slot: i }); };
+      cd.onpointerdown = (e) => { if (canAct()) startDrag(e, { kind: 'shop', slot: i }, cd, () => client.send({ type: 'buy', slot: i })); };
       box.appendChild(cd);
     });
   }
@@ -270,7 +290,7 @@
         d.onclick = () => {
           if (mode === 'combat') client.send({ type: 'watch', pid: p.id });
           else if (p.id === myPid) exitScout();
-          else if (mode === 'plan' || mode === 'safari') client.send({ type: 'scout', pid: p.id });
+          else if (mode === 'plan' || mode === 'safari') { scoutWanted = true; client.send({ type: 'scout', pid: p.id }); }
         };
       }
       d.innerHTML = `<div class="nm"><span>${esc(p.name)}${p.id === myPid ? ' ⭐' : ''}${p.connected ? '' : ' 🔌'}</span><span>${p.alive ? p.hp + '❤' : '#' + p.place}</span></div>
@@ -321,7 +341,7 @@
   function compClick(i) {
     if (selComp === null) { selComp = i; selItem = null; toast('Arrastra o haz clic en otra cosa: otro componente = combinar · una unidad = equipar', 2600); }
     else if (selComp === i) selComp = null;
-    else { client.send({ type: 'combine', i: selComp, j: i }); selComp = null; }
+    else { client.send({ type: 'combine', i: selComp, j: i, ki: S.you.components[selComp], kj: S.you.components[i] }); selComp = null; }
     renderItems();
   }
   function itemClick(i) {
@@ -373,9 +393,11 @@
     if (!others.length) return exitScout();
     let idx = others.findIndex(p => p.id === scout.pid);
     if (idx < 0) idx = 0;
+    scoutWanted = true;
     client.send({ type: 'scout', pid: others[(idx + dir + others.length) % others.length].id });
   }
   function exitScout() {
+    scoutWanted = false;
     if (!scout) return;
     scout = null;
     $('combat-title').classList.add('hidden');
@@ -383,22 +405,23 @@
   }
 
   // ---------- planificación ----------
+  // clic en unidad = SOLO ver información (mover es siempre arrastrando, estilo TFT)
   function boardClick(r, c) {
     if (scout || mode !== 'plan' || !S || !S.you.alive || r < 4) return;
     const ownR = 7 - r;
     const u = S.you.board[ownR][c];
-    if (selItem !== null && u) { client.send({ type: 'equip', iid: u.iid, idx: selItem }); selItem = null; renderItems(); return; }
-    if (selComp !== null && u) { client.send({ type: 'equipComp', iid: u.iid, idx: selComp }); selComp = null; renderItems(); return; }
-    if (sel) { client.send({ type: 'move', iid: sel.iid, to: 'board', r: ownR, c }); sel = null; updateSelVisual(); return; }
+    if (selItem !== null && u) { client.send({ type: 'equip', iid: u.iid, idx: selItem, k: S.you.fullItems[selItem] }); selItem = null; renderItems(); return; }
+    if (selComp !== null && u) { client.send({ type: 'equipComp', iid: u.iid, idx: selComp, k: S.you.components[selComp] }); selComp = null; renderItems(); return; }
     if (u) { sel = { iid: u.iid, unit: u }; updateSelVisual(); showUnitInfo(u); }
+    else { sel = null; updateSelVisual(); }
   }
   function benchClick(i) {
     if (scout || !S || !S.you.alive || mode === 'safari') return;
     const u = S.you.bench[i];
-    if (selItem !== null && u) { client.send({ type: 'equip', iid: u.iid, idx: selItem }); selItem = null; renderItems(); return; }
-    if (selComp !== null && u) { client.send({ type: 'equipComp', iid: u.iid, idx: selComp }); selComp = null; renderItems(); return; }
-    if (sel) { client.send({ type: 'move', iid: sel.iid, to: 'bench', i }); sel = null; updateSelVisual(); return; }
-    if (u) { sel = { iid: u.iid, unit: u }; updateSelVisual(); showUnitInfo(u); }
+    if (selItem !== null && u) { client.send({ type: 'equip', iid: u.iid, idx: selItem, k: S.you.fullItems[selItem] }); selItem = null; renderItems(); return; }
+    if (selComp !== null && u) { client.send({ type: 'equipComp', iid: u.iid, idx: selComp, k: S.you.components[selComp] }); selComp = null; renderItems(); return; }
+    if (u) { sel = { iid: u.iid, unit: u }; if (mode === 'plan') updateSelVisual(); showUnitInfo(u); }
+    else { sel = null; if (mode === 'plan') updateSelVisual(); }
   }
   function renderPlanBoard() {
     ensureCells();
@@ -460,6 +483,7 @@
       let d = unitEls.get(u.uid);
       if (!d) {
         d = el('div', 'unit' + (u.side === mySide ? '' : ' enemy'));
+        if (u.srcIid && u.side === mySide) d.dataset.iid = u.srcIid; // permite soltar objetos sobre tus unidades en combate
         const its = (u.items || []).map(k => ITEMS[k] ? ITEMS[k].emoji : (COMPONENTS[k] ? COMPONENTS[k].emoji : '')).join('');
         d.innerHTML = `<div class="stars">${'★'.repeat(u.star)}</div>
           <div class="bars"><div class="hpb"><i></i></div><div class="enb"><i></i></div></div>
